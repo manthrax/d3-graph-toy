@@ -44,15 +44,14 @@
             import*as d3 from "d3-force";
 
             // --- CORE CONFIGURATION ---
-            const NODE_COUNT = 1000;
-            const EDGE_COUNT = (NODE_COUNT * .75) | 0;
+            const NODE_COUNT = 10000;
+            const EDGE_COUNT = (NODE_COUNT * 0.52) | 0;
 
             // D3 Force Constants
-            const REPULSION_FORCE_STRENGTH = -.025;
-            const CENTER_FORCE_STRENGTH = 1.75;
-            const LINK_DISTANCE = 50;
-            const VELOCITY_DECAY = .01;//0.6;
-            const ALPHA_DECAY = .0;//0.02;
+            const FORCE_STRENGTH = -10;
+            const LINK_DISTANCE = 250;
+            const VELOCITY_DECAY = 0.6;
+            const ALPHA_DECAY = .05;//0.02;
             const STEPS_PER_FRAME = 1;
 
             // Three.js Globals
@@ -78,30 +77,23 @@
             // --- DATA GENERATION ---
             const {nodes, sockets, edges} = generateGraphData(NODE_COUNT, EDGE_COUNT, rnd);
 
-            // --- TEXT ATLAS (Per-glyph atlas for Node Labels) ---
-            // Use a monospace stack for consistent glyph metrics and sharper rendering.
+            // --- TEXT ATLAS (For Node Labels) ---
             const atlas = buildTextAtlas(nodes.map(n => n.label), {
-                // larger font size for higher pixel density in the atlas
-                font: "36px ui-monospace, SFMono-Regular, Menlo, Monaco, 'Roboto Mono', 'Courier New', monospace",
-                padding: 6,
-                // larger atlas width to accommodate higher-res glyphs
-                maxW: 4096,
-                // pixels-per-world-unit used when drawing glyphs (higher -> crisper)
-                ppu: 256
+                font: "18px system-ui",
+                padding: 8,
+                maxW: 4096
             });
             const atlasTex = new THREE.CanvasTexture(atlas.canvas);
             atlasTex.minFilter = THREE.LinearMipMapLinearFilter;
             atlasTex.magFilter = THREE.LinearFilter;
-            atlasTex.generateMipmaps = true;
             atlasTex.flipY = false;
             atlasTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-            atlasTex.needsUpdate = true;
             document.body.style.overflow = 'hidden';
 
 
             //Debug the atlas:
-            Object.assign(atlas.canvas.style,{position:"absolute",left:"0px",top:"0px",pointerEvents:'none',zIndex:0});
-            document.body.appendChild(atlas.canvas);
+            //Object.assign(atlas.canvas.style,{position:"absolute",left:"0px",top:"0px",pointerEvents:'none',zIndex:0});
+            //document.body.appendChild(atlas.canvas);
 
             // --- INSTANCED MESHES ---
             const {nodeBody, header, labelMesh, socketMesh, lines, linePos, lineGeom} = setupSceneObjects(NODE_COUNT, sockets.length, edges.length, scene, atlasTex, renderer);
@@ -126,9 +118,9 @@
                     this.simulation = d3.forceSimulation(this.nodes)
                         .velocityDecay(VELOCITY_DECAY)
                         .alphaDecay(ALPHA_DECAY)
-                        .force("charge", d3.forceManyBody().strength(REPULSION_FORCE_STRENGTH)) // Repulsion
+                        .force("charge", d3.forceManyBody().strength(FORCE_STRENGTH)) // Repulsion
                     .force("link", d3.forceLink(linkData).id(d => d.id).distance(LINK_DISTANCE))// Attraction
-                    .force("center", d3.forceCenter(0, 0).strength(CENTER_FORCE_STRENGTH))// Centering
+                    .force("center", d3.forceCenter(0, 0))// Centering
                     .stop();
                 }
 
@@ -146,52 +138,7 @@
                     }
                 }
             }
-let {max,min}=Math;
-export default function ZoomToCursorBehavior({THREE,controls,renderer}){
-    controls.enableZoom = false;
-    //controls.enabled = false
-    let mouseRay=new THREE.Vector3()
-    let tv0=new THREE.Vector3()
-    this.zoomSpeed = 2.;
-    let sumDelta = 0;
-    window.addEventListener('wheel',(e)=>{
-        if(e.target!==renderer.domElement) return
-        mouseRay.set((event.clientX / window.innerWidth) * 2 - 1,-(event.clientY / window.innerHeight) * 2 + 1, 0.1);
-        sumDelta += event.deltaY;
-    },false)
-    this.update=(camera)=>{
 
-        if(!sumDelta) return;
-
-        tv0.copy(mouseRay);
-        tv0.unproject(camera);
-        tv0.sub(camera.position);
-
-        tv0.setLength(this.zoomSpeed).multiplyScalar(sumDelta<0?1:-1);
-
-        if(camera.isOrthographicCamera){
-            (!camera.targetZoom) && (camera.targetZoom=camera.zoom);
-            camera.zoom = min(100,max(.001,camera.zoom+(sumDelta*-.01)));
-            camera.updateProjectionMatrix();
-        }else{
-            if(sumDelta>0)
-                tv0.set(0,0,1).applyQuaternion(camera.quaternion)
-            tv0.setLength(this.zoomSpeed*10);//.multiplyScalar(-1);
-        }
-        if(!camera.targetImpulse)camera.targetImpulse=tv0.clone()
-        if(!controls.targetImpulse)controls.targetImpulse=tv0.clone()
-        camera.targetImpulse.add(tv0)
-        controls.targetImpulse.add(tv0)
-        //controls.enabled = false
-        camera.position.add(camera.targetImpulse);
-        camera.targetImpulse.set(0,0,0)
-        controls.target.add(controls.targetImpulse);
-        controls.targetImpulse.set(0,0,0)
-        sumDelta = 0;
-    }
-}
-            let cursorZoom = new ZoomToCursorBehavior({THREE,controls,camera,renderer});
-            //ZoomToCursorBehavior})
             // --- RELAXER & RENDERER ---
             const relaxer = new GraphRelaxer(nodes,edges,writeAll);
 
@@ -202,8 +149,6 @@ export default function ZoomToCursorBehavior({THREE,controls,renderer}){
 
             // --- MAIN ANIMATION LOOP ---
             function animate() {
-                cursorZoom.update(camera)
-
                 relaxer.update();
                 controls.update();
                 renderer.render(scene, camera);
@@ -211,60 +156,40 @@ export default function ZoomToCursorBehavior({THREE,controls,renderer}){
 
             // --- THREE.JS UPDATE FUNCTIONS ---
 
-            // Write label as multiple glyph instances
             function writeLabel(i) {
                 const n = nodes[i];
-                const label = n.label || "";
-                const maxChars = labelMesh.userData.maxChars;
-                const baseIndex = i * maxChars; // start glyph instance index for this node
+                const uv = atlas.uvs[i];
+                const px = atlas.rects[i];
+                // The rectangle for this label in the atlas (in pixels)
 
-                // Determine glyph world height from header; glyph width uses monospace advance
+                // The aspect ratio of the label text from the atlas
+                const aspect = px.w / px.h;
+
+                // Define the world-space dimensions of the label plane.
+                // We'll make the label's height fit the node's header height, minus some padding.
                 const headerWorldH = n.h * headerHFrac;
-                const glyphWorldH = headerWorldH * 0.8; // padding
+                const labelWorldH = headerWorldH * 0.8;
+                // Use 80% of header height for padding
+                const labelWorldW = labelWorldH * aspect;
 
-                // Use atlas.glyphW/glyphH (in pixels->uv) to compute world widths
-                const glyphPxW = atlas.glyphAdvancePx || atlas.glyphW || 8;
-                const glyphPxH = atlas.glyphH || glyphPxW;
+                // Position the label. We want it centered horizontally in the node,
+                // and centered vertically within the colored header strip.
+                const headerCenterY = n.y + (n.h / 2) - (headerWorldH / 2);
 
-                // compute world width per glyph from pixel ratio (atlas.ppu = pixels per unit)
-                const ppu = atlas.ppu || 64;
-                const glyphWorldW = (glyphPxW / ppu) * glyphWorldH / (glyphPxH / ppu);
+                _m.compose(new THREE.Vector3(n.x,// Horizontally centered on the node
+                headerCenterY,// Vertically centered in the header
+                0.2 // Z-offset to appear on top
+                ), _q, // No rotation
+                new THREE.Vector3(labelWorldW,labelWorldH,1)// Scale the 1x1 plane
+                );
+                labelMesh.setMatrixAt(i, _m);
 
-                // compute total label width in world units
-                const totalW = glyphWorldW * label.length;
-
-                // left start so that label is left-aligned inside header with a small pad
-                const startX = n.x - n.w / 2 + (labelPad / ppu) + glyphWorldW / 2;
-                const y = n.y + (n.h / 2 - (headerWorldH / 2));
-
-                const uvArr = labelMesh.geometry.getAttribute('instanceUv').array;
-
-                for (let g = 0; g < maxChars; g++) {
-                    const instId = baseIndex + g;
-                    if (g < label.length) {
-                        const ch = label.charAt(g);
-                        const glyph = atlas.glyphs[ch] || atlas.glyphs['?'];
-                        if (!glyph) continue;
-
-                        const gx = startX + g * glyphWorldW;
-
-                        _m.compose(new THREE.Vector3(gx, y, 0.2), _q, new THREE.Vector3(glyphWorldW, glyphWorldH, 1));
-                        labelMesh.setMatrixAt(instId, _m);
-
-                        uvArr[instId * 4 + 0] = glyph.x;
-                        uvArr[instId * 4 + 1] = glyph.y;
-                        uvArr[instId * 4 + 2] = glyph.w;
-                        uvArr[instId * 4 + 3] = glyph.h;
-                    } else {
-                        // Put off-screen or scale to zero for unused instances
-                        _m.compose(new THREE.Vector3(0, -99999, 0), _q, new THREE.Vector3(0.0001, 0.0001, 1));
-                        labelMesh.setMatrixAt(instId, _m);
-                        uvArr[instId * 4 + 0] = 0;
-                        uvArr[instId * 4 + 1] = 0;
-                        uvArr[instId * 4 + 2] = 0;
-                        uvArr[instId * 4 + 3] = 0;
-                    }
-                }
+                // Set the UV attributes for the instanced shader to select the correct part of the atlas
+                const arr = labelMesh.geometry.getAttribute('instanceUv').array;
+                arr[i * 4 + 0] = uv.x;
+                arr[i * 4 + 1] = uv.y;
+                arr[i * 4 + 2] = uv.w;
+                arr[i * 4 + 3] = uv.h;
             }
 
             function writeNode(i) {
@@ -321,11 +246,8 @@ export default function ZoomToCursorBehavior({THREE,controls,renderer}){
 
                 // Signal Three.js to use the updated data
                 header.instanceColor.needsUpdate = true;
-                // instanceUv buffer for glyphs
                 labelMesh.geometry.getAttribute('instanceUv').needsUpdate = true;
-                nodeBody.instanceMatrix.needsUpdate = header.instanceMatrix.needsUpdate = true;
-                // mark glyph instance matrix range updated
-                labelMesh.instanceMatrix.needsUpdate = true;
+                nodeBody.instanceMatrix.needsUpdate = header.instanceMatrix.needsUpdate = labelMesh.instanceMatrix.needsUpdate = true;
                 socketMesh.instanceMatrix.needsUpdate = true;
                 lineGeom.attributes.position.needsUpdate = true;
             }
@@ -370,8 +292,8 @@ export default function ZoomToCursorBehavior({THREE,controls,renderer}){
                 const nodes = labels.map( (label, i) => ({
                     id: i,
                     label,
-                    x: (rnd() * 2 - 1) * 50,
-                    y: (rnd() * 2 - 1) * 50,
+                    x: (rnd() * 2 - 1) * 250,
+                    y: (rnd() * 2 - 1) * 150,
                     z: 0,
                     w: 20 + rnd() * 20,
                     // width
@@ -436,27 +358,27 @@ export default function ZoomToCursorBehavior({THREE,controls,renderer}){
                 header.frustumCulled = false;
                 scene.add(header);
 
-                // Labels (Per-glyph atlas textured)
+                // Labels (Atlas textured)
                 const labelMat = new THREE.MeshBasicMaterial({
                     map: atlasTex,
                     transparent: true,
                     depthWrite: false
                 });
-                // Inject per-instance UV mapping; note atlas.canvas uses top-left origin so flip Y in shader
                 labelMat.onBeforeCompile = (shader) => {
-                    shader.vertexShader = shader.vertexShader.replace('#include <uv_vertex>', `#include <uv_vertex>\n#ifdef USE_MAP\n#ifdef USE_INSTANCING\n    vMapUv = vec2(uv.x, 1.0 - uv.y) * instanceUv.zw + instanceUv.xy; // scale + offset\n#endif\n#endif\n`);
+                    shader.vertexShader = shader.vertexShader.replace('#include <uv_vertex>', `#include <uv_vertex>
+#ifdef USE_MAP
+#ifdef USE_INSTANCING
+    vMapUv = vec2(uv.x,1.-uv.y) * instanceUv.zw + instanceUv.xy; // scale + offset
+#endif
+#endif
+`);
                     shader.vertexShader = shader.vertexShader.replace('#include <common>', `#include <common>\nattribute vec4 instanceUv;`);
-                };
-
-                // Allocate a pool of glyph instances: nodeCount * maxCharsPerLabel
-                const maxChars = Math.max(...nodes.map(n => n.label.length));
-                const glyphPool = nodeCount * Math.max(1, maxChars);
-                const labelMesh = new THREE.InstancedMesh(plane, labelMat, glyphPool);
+                }
+                ;
+                const labelMesh = new THREE.InstancedMesh(plane,labelMat,nodeCount);
                 labelMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-                labelMesh.geometry.setAttribute('instanceUv', new THREE.InstancedBufferAttribute(new Float32Array(glyphPool * 4), 4));
+                labelMesh.geometry.setAttribute('instanceUv', new THREE.InstancedBufferAttribute(new Float32Array(nodeCount * 4),4));
                 labelMesh.frustumCulled = false;
-                // store helpers
-                labelMesh.userData = { maxChars, glyphPool };
                 scene.add(labelMesh);
 
                 // Sockets (Circles)
@@ -532,9 +454,6 @@ export default function ZoomToCursorBehavior({THREE,controls,renderer}){
             }
             );
 
-                nodeBody.computeBoundingSphere();
-            nodeBody.boundingSphere.makeEmpty();
-            nodeBody.boundingSphere.radius = 10000
             function onDown(e) {
                 setMouse(e);
                 raycaster.setFromCamera(mouse, camera);
@@ -613,73 +532,107 @@ export default function ZoomToCursorBehavior({THREE,controls,renderer}){
                 }
             }
 
-            // Text Atlas Builder (Per-glyph atlas for dynamic text)
+            // Text Atlas Builder (For dynamic text in Three.js)
             function buildTextAtlas(texts, opt) {
-                opt = opt || {};
-                const pad = ('padding' in opt) ? opt.padding : 4;
-                const font = opt.font || "24px system-ui";
-                const maxW = opt.maxW || 2048;
-                const ppu = opt.ppu || 64; // pixels per unit (for converting px -> world units)
+                const pad = opt.padding | 0
+                  , font = opt.font || "24px system-ui"
+                  , maxW = opt.maxW || 2048
+                  , ppu = 64;
+                const ctx = document.createElement('canvas').getContext('2d');
+                ctx.font = font;
+                ctx.textBaseline = "middle";
+                ctx.fillStyle = "#000";
+                // Changed to black for better label contrast on white/colored nodes
 
-                // Flatten unique characters from all texts
-                const charset = new Set();
-                for (const t of texts) for (const ch of t) charset.add(ch);
-                // ensure fallback glyph
-                charset.add('?');
-
-                const chars = Array.from(charset).sort();
-
-                // Canvas for measuring
-                const measureCtx = document.createElement('canvas').getContext('2d');
-                measureCtx.font = font;
-                measureCtx.textBaseline = 'middle';
-
-                // For monospace fonts we can use a fixed advance; measure 'M' as representative
-                const sample = measureCtx.measureText('M');
-                const glyphAdvancePx = Math.ceil(sample.width);
-                // Estimate glyph height from font size
-                const fontSize = parseInt(font, 10) || 16;
-                const glyphH = Math.ceil(fontSize * 1.2);
-                const glyphW = glyphAdvancePx;
-
-                // Pack glyphs in rows
-                const cols = Math.max(1, Math.floor(maxW / (glyphW + pad * 2)));
-                const rows = Math.ceil(chars.length / cols);
-                const atlasW = cols * (glyphW + pad * 2);
-                // round to pow2 height for mipmaps compatibility
-                const pow2 = v => { let p = 1; while (p < v) p <<= 1; return p; };
-                const atlasH = pow2(rows * (glyphH + pad * 2));
-
-                const can = document.createElement('canvas');
-                can.width = atlasW; can.height = atlasH;
-                const ctx = can.getContext('2d');
-                ctx.clearRect(0,0,can.width,can.height);
-                ctx.font = font; ctx.textBaseline = 'middle'; ctx.fillStyle = 'black';
-
-                const glyphs = Object.create(null);
-                for (let i = 0; i < chars.length; i++) {
-                    const ch = chars[i];
-                    const col = i % cols; const row = Math.floor(i / cols);
-                    const x = col * (glyphW + pad * 2) + pad;
-                    const y = row * (glyphH + pad * 2) + pad;
-                    // center text vertically within box
-                    ctx.fillText(ch, x, y + glyphH / 2);
-                    glyphs[ch] = {
-                        x: x / can.width,
-                        y: y / can.height,
-                        w: glyphW / can.width,
-                        h: glyphH / can.height,
-                        pxW: glyphW,
-                        pxH: glyphH
+                // 1. Measure and get metrics
+                const metrics = texts.map(t => {
+                    const m = ctx.measureText(t);
+                    const h = Math.ceil(parseInt(font, 10) * 1.0);
+                    return {
+                        w: Math.ceil(m.width) + pad * 2,
+                        h: h + pad * 2,
+                        text: t
                     };
                 }
+                );
+
+                // 2. Simple shelf pack to determine atlas size
+                let x = 0
+                  , y = 0
+                  , rowH = 0
+                  , atlasW = maxW
+                  , atlasH = 0;
+                const rects = metrics.map(m => {
+                    if (x + m.w > atlasW) {
+                        x = 0;
+                        y += rowH;
+                        rowH = 0;
+                    }
+                    const r = {
+                        x,
+                        y,
+                        w: m.w,
+                        h: m.h
+                    };
+                    x += m.w;
+                    rowH = Math.max(rowH, m.h);
+                    atlasH = Math.max(atlasH, y + m.h);
+                    return r;
+                }
+                );
+
+                // 3. Round height up to power of 2
+                const pow2 = v => {
+                    let p = 1;
+                    while (p < v)
+                        p <<= 1;
+                    return p;
+                }
+                ;
+                atlasH = pow2(atlasH);
+
+                // 4. Draw to canvas
+                const can = document.createElement('canvas');
+                can.width = atlasW;
+                can.height = atlasH;
+                const c = can.getContext('2d');
+                c.clearRect(0, 0, atlasW, atlasH);
+                //c.fillStyle = 'green'
+                //c.fillRect(0, 0, atlasW, atlasH);
+
+                //c.clearRect(0, 0, atlasW, atlasH);
+                c.font = font;
+                c.textBaseline = "middle";
+                c.fillStyle = "black";
+                c.stokeStyle = 'red'
+                metrics.forEach( (m, i) => {
+                    const r = rects[i];
+
+                    //c.fillStyle = 'white'
+                    //c.fillRect(r.x+2, r.y+2, (r.w-4), (r.h-4))
+                    //c.fillStyle ="black";
+
+
+                    c.fillText(m.text, r.x + pad, r.y + (r.h * .5));
+                    //c.beginPath()
+                    //c.strokeRect(r.x, r.y, r.x + r.w, r.y + r.h)
+                    //c.stroke();
+
+                }
+                );
+
+                // 5. Calculate UVs
+                const uvs = rects.map(r => ({
+                    x: r.x / atlasW,
+                    y: r.y / atlasH,
+                    w: r.w / atlasW,
+                    h: r.h / atlasH
+                }));
 
                 return {
                     canvas: can,
-                    glyphs,
-                    glyphAdvancePx,
-                    glyphW,
-                    glyphH,
+                    uvs,
+                    rects,
                     ppu
                 };
             }

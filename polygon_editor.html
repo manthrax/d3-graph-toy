@@ -31,17 +31,16 @@
             {
                 "imports": {
                     "three": "https://cdn.jsdelivr.net/npm/three@0.161/build/three.module.js",
-                    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161/examples/jsm/",
-                    "polygon-clipping": "https://cdn.jsdelivr.net/npm/@labelbox/polygon-clipping@0.0.5/dist/polygon-clipping.esm.js"
+                    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161/examples/jsm/"
                 }
             }</script>
     </head>
     <body>
         <div id="info">Polygon Editor</div>
+        <script src="https://cdn.jsdelivr.net/npm/@labelbox/polygon-clipping@0.0.5/dist/polygon-clipping.umd.min.js"></script>
         <script type="module">
             import * as THREE from "three";
             import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-            import clip from "polygon-clipping";
 
             // --- CORE CONFIGURATION ---
             const W = window.innerWidth;
@@ -100,7 +99,7 @@
                 const subjectPolygons = getPolygonsFromIndices(subjectPolygonIndices, vertices);
 
                 // 2. Perform clipping
-                const clippedPolygons = clip.intersection(boundaryPolygon, ...subjectPolygons);
+                const clippedPolygons = polygonClipping.intersection(boundaryPolygon, ...subjectPolygons);
 
                 // 3. Render the resulting polygons
                 renderPolygons(clippedPolygons, 0x00ff00);
