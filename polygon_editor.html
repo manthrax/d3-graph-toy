@@ -12,7 +12,6 @@
                 color: #ddd;
                 font: 13px/1.3 system-ui
             }
-
             #info {
                 position: fixed;
                 top: 8px;
@@ -22,10 +21,7 @@
                 padding: 6px 8px;
                 border-radius: 6px
             }
-
-            canvas {
-                display: block
-            }
+            canvas { display: block }
         </style>
         <script type="importmap">
             {
@@ -33,14 +29,13 @@
                     "three": "https://cdn.jsdelivr.net/npm/three@0.161/build/three.module.js",
                     "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161/examples/jsm/"
                 }
-            }</script>
+            }
+        </script>
     </head>
     <body>
         <div id="info">
-            Polygon Editor
-            <br>
-            <label><input type="checkbox" id="wireframe-toggle"> Wireframe</label>
-            <br>
+            Polygon Editor<br>
+            <label><input type="checkbox" id="wireframe-toggle"> Wireframe</label><br>
             <button id="add-polygon-btn">Add Polygon</button>
             <button id="lock-polygon-btn">Lock Polygon</button>
         </div>
@@ -49,527 +44,431 @@
             import * as THREE from "three";
             import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
-            // --- CORE CONFIGURATION ---
-            const W = window.innerWidth;
-            const H = window.innerHeight;
+            class PolygonEditor {
+                constructor() {
+                    this.W = window.innerWidth;
+                    this.H = window.innerHeight;
 
-            // --- INITIALIZE THREE.JS SCENE ---
-            const renderer = setupRenderer();
-            const scene = setupScene();
-            const camera = setupCamera(W, H);
-            const controls = setupControls(camera, renderer.domElement);
+                    this.renderer = this.setupRenderer();
+                    this.scene = this.setupScene();
+                    this.camera = this.setupCamera(this.W, this.H);
+                    this.controls = this.setupControls(this.camera, this.renderer.domElement);
 
-            // --- DATA STRUCTURES ---
-            function createWarpedCircle(radius, numPoints, warpFactor) {
-                const points = [];
-                for (let i = 0; i < numPoints; i++) {
-                    const angle = (i / numPoints) * Math.PI * 2;
-                    const r = radius + (Math.random() - 0.5) * warpFactor;
-                    points.push([Math.cos(angle) * r, Math.sin(angle) * r]);
+                    this.vertices = [];
+                    this.subjectPolygonIndices = [];
+                    this.lockedPolygons = [];
+                    this.activePolygons = new Set();
+                    this.boundaryPolygon = [];
+
+                    this.addPolygonMode = false;
+                    this.newPolygonVertices = [];
+                    this.draggedVertex = null;
+
+                    this.polygonMeshes = new THREE.Group();
+                    this.polygonEdges = new THREE.Group();
+                    this.vertexHandles = new THREE.Group();
+                    this.boundaryMesh = new THREE.Group();
+                    this.previewVertex = new THREE.Mesh(
+                        new THREE.CircleGeometry(3, 16),
+                        new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.5 })
+                    );
+                    this.previewVertex.visible = false;
+                    this.newPolygonPreview = new THREE.Group();
+                    this.scene.add(this.polygonMeshes, this.polygonEdges, this.vertexHandles, this.boundaryMesh, this.previewVertex, this.newPolygonPreview);
+
+                    this.plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+                    this.raycaster = new THREE.Raycaster();
+                    this.mouse = new THREE.Vector2();
+
+                    this.init();
                 }
-                return [points];
-            }
-            const boundaryPolygon = createWarpedCircle(120, 30, 40);
 
-            // Master list of vertices
-            const vertices = [
-                // Polygon 1
-                { x: 0, y: 0 },    // 0
-                { x: 50, y: 0 },   // 1
-                { x: 50, y: 50 },  // 2
-                { x: 0, y: 50 },   // 3
-                // Polygon 2 (shares edge 1-2 with Polygon 3)
-                { x: 25, y: 25 },  // 4
-                { x: 75, y: 25 },  // 5
-                { x: 75, y: 75 },  // 6
-                { x: 25, y: 75 },  // 7
-                 // Polygon 3 (shares edge 1-2 with Polygon 2)
-                { x: 50, y: 50 },  // 8
-                { x: 100, y: 50 }, // 9
-                { x: 100, y: 100}, // 10
-                { x: 50, y: 100}  // 11
-            ];
+                init() {
+                    this.setupUI();
+                    this.createInitialGeometry();
+                    this.renderBoundary();
+                    this.updateScene();
+                    this.renderer.setAnimationLoop(() => this.animate());
+                }
 
-            // Polygons defined by indices into the vertices array
-            const subjectPolygonIndices = [
-                [0, 1, 2, 3],
-                [4, 5, 6, 7],
-                [8, 9, 10, 11]
-            ];
-            const lockedPolygons = new Array(subjectPolygonIndices.length).fill(false);
+                setupUI() {
+                    const wireframeToggle = document.getElementById('wireframe-toggle');
+                    wireframeToggle.addEventListener('change', () => this.updateScene());
 
-            // --- SCENE OBJECTS ---
-            const polygonMeshes = new THREE.Group();
-            const polygonEdges = new THREE.Group();
-            const vertexHandles = new THREE.Group();
-            const boundaryMesh = new THREE.Group();
-            const previewVertex = new THREE.Mesh(
-                new THREE.CircleGeometry(3, 16),
-                new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.5 })
-            );
-            previewVertex.visible = false;
-            const newPolygonPreview = new THREE.Group();
-            scene.add(polygonMeshes, polygonEdges, vertexHandles, boundaryMesh, previewVertex, newPolygonPreview);
+                    const addPolygonBtn = document.getElementById('add-polygon-btn');
+                    addPolygonBtn.addEventListener('click', () => this.toggleAddPolygonMode());
 
-            // --- LOGIC ---
+                    const lockPolygonBtn = document.getElementById('lock-polygon-btn');
+                    lockPolygonBtn.addEventListener('click', () => this.toggleLockPolygon());
 
-            function getPolygonsFromIndices(indicesList, vertices) {
-                return indicesList.map(indices => {
-                    return [indices.map(i => [vertices[i].x, vertices[i].y])];
-                });
-            }
+                    window.addEventListener('pointerdown', (e) => this.onPointerDown(e));
+                    window.addEventListener('pointermove', (e) => this.onPointerMove(e));
+                    window.addEventListener('pointerup', (e) => this.onPointerUp(e));
+                    window.addEventListener('resize', () => this.resize());
+                }
 
-            function updateScene() {
-                // 1. Convert indexed polygons to the format required for clipping
-                const subjectPolygons = getPolygonsFromIndices(subjectPolygonIndices, vertices);
+                createInitialGeometry() {
+                    this.boundaryPolygon = this.createWarpedCircle(120, 30, 40);
+                    this.vertices = [
+                        { x: 0, y: 0 }, { x: 50, y: 0 }, { x: 50, y: 50 }, { x: 0, y: 50 },
+                        { x: 25, y: 25 }, { x: 75, y: 25 }, { x: 75, y: 75 }, { x: 25, y: 75 },
+                        { x: 50, y: 50 }, { x: 100, y: 50 }, { x: 100, y: 100 }, { x: 50, y: 100 }
+                    ];
+                    this.subjectPolygonIndices = [
+                        [0, 1, 2, 3],
+                        [4, 5, 6, 7],
+                        [8, 9, 10, 11]
+                    ];
+                    this.lockedPolygons = new Array(this.subjectPolygonIndices.length).fill(false);
+                }
 
-                // 2. Perform clipping with ClipperLib
-                const scale = 100; // Clipper works with integers
-                const subj_paths = subjectPolygons.map(p => p[0].map(v => ({ X: v[0] * scale, Y: v[1] * scale })));
-                const clip_paths = boundaryPolygon.map(p => p.map(v => ({ X: v[0] * scale, Y: v[1] * scale })));
-
-                const cpr = new ClipperLib.Clipper();
-                cpr.AddPaths(subj_paths, ClipperLib.PolyType.ptSubject, true);
-                cpr.AddPaths(clip_paths, ClipperLib.PolyType.ptClip, true);
-
-                const solution_paths = new ClipperLib.Paths();
-                const clipType = ClipperLib.ClipType.ctIntersection;
-                const subjectFillType = ClipperLib.PolyFillType.pftNonZero;
-                const clipFillType = ClipperLib.PolyFillType.pftNonZero;
-                cpr.Execute(clipType, solution_paths, subjectFillType, clipFillType);
-
-                const clippedPolygons = solution_paths.map(path => [path.map(p => [p.X / scale, p.Y / scale])]);
-
-                // 3. Render the resulting polygons
-                renderPolygons(clippedPolygons);
-
-                // 4. Render the polygon edges
-                renderPolygonEdges(clippedPolygons, 0xffffff);
-
-                // 5. Render the vertex handles
-                renderVertexHandles(vertices);
-            }
-
-            function renderPolygonEdges(polygons, color) {
-                while (polygonEdges.children.length) polygonEdges.remove(polygonEdges.children[0]);
-
-                const material = new THREE.LineBasicMaterial({ color });
-
-                polygons.forEach(polygon => {
-                    if (!polygon || !polygon[0] || polygon[0].length < 2) return;
+                createWarpedCircle(radius, numPoints, warpFactor) {
                     const points = [];
-                    const outerRing = polygon[0];
-                    for (let i = 0; i < outerRing.length; i++) {
-                        points.push(new THREE.Vector3(outerRing[i][0], outerRing[i][1], 0.01));
+                    for (let i = 0; i < numPoints; i++) {
+                        const angle = (i / numPoints) * Math.PI * 2;
+                        const r = radius + (Math.random() - 0.5) * warpFactor;
+                        points.push([Math.cos(angle) * r, Math.sin(angle) * r]);
                     }
-                    points.push(new THREE.Vector3(outerRing[0][0], outerRing[0][1], 0.01)); // Close the loop
-
-                    const geometry = new THREE.BufferGeometry().setFromPoints(points);
-                    const line = new THREE.Line(geometry, material);
-                    polygonEdges.add(line);
-
-                    // Also render holes
-                    for (let i = 1; i < polygon.length; i++) {
-                        const holePoints = [];
-                        const innerRing = polygon[i];
-                        for (let j = 0; j < innerRing.length; j++) {
-                            holePoints.push(new THREE.Vector3(innerRing[j][0], innerRing[j][1], 0.01));
-                        }
-                        holePoints.push(new THREE.Vector3(innerRing[0][0], innerRing[0][1], 0.01)); // Close the loop
-                        const holeGeometry = new THREE.BufferGeometry().setFromPoints(holePoints);
-                        const holeLine = new THREE.Line(holeGeometry, material);
-                        polygonEdges.add(holeLine);
-                    }
-                });
-            }
-
-            function renderPolygons(polygons) {
-                while (polygonMeshes.children.length) polygonMeshes.remove(polygonMeshes.children[0]);
-                const isWireframe = document.getElementById('wireframe-toggle').checked;
-
-                polygons.forEach((polygon, index) => {
-                    if (!polygon || !polygon[0] || polygon[0].length < 3) return;
-                    const shape = new THREE.Shape();
-                    const outerRing = polygon[0];
-                    shape.moveTo(outerRing[0][0], outerRing[0][1]);
-                    for (let i = 1; i < outerRing.length; i++) {
-                        shape.lineTo(outerRing[i][0], outerRing[i][1]);
-                    }
-                    shape.closePath();
-
-                    for (let i = 1; i < polygon.length; i++) {
-                        const hole = new THREE.Path();
-                        const innerRing = polygon[i];
-                        hole.moveTo(innerRing[0][0], innerRing[0][1]);
-                        for (let j = 1; j < innerRing.length; j++) {
-                            hole.lineTo(innerRing[j][0], innerRing[j][1]);
-                        }
-                        hole.closePath();
-                        shape.holes.push(hole);
-                    }
-
-                    const extrudeSettings = {
-                        steps: 1,
-                        depth: 10,
-                        bevelEnabled: false,
-                    };
-                    const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-                    const color = lockedPolygons[index]
-                        ? new THREE.Color(0xff0000)
-                        : new THREE.Color().setHSL(index / polygons.length, 0.7, 0.5);
-                    const material = new THREE.MeshPhongMaterial({
-                        color,
-                        side: THREE.DoubleSide,
-                        wireframe: isWireframe,
-                        emissive: activePolygons.has(index) ? 0x444444 : 0x000000
-                    });
-                    const mesh = new THREE.Mesh(geometry, material);
-                    mesh.position.z = -10; // Extrude "down"
-                    polygonMeshes.add(mesh);
-                });
-            }
-
-            function renderBoundary() {
-                while (boundaryMesh.children.length) boundaryMesh.remove(boundaryMesh.children[0]);
-                const material = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2 });
-                const points = [];
-                const outerRing = boundaryPolygon[0];
-                for (let i = 0; i < outerRing.length; i++) {
-                    points.push(new THREE.Vector3(outerRing[i][0], outerRing[i][1], 0));
+                    return [points];
                 }
-                points.push(new THREE.Vector3(outerRing[0][0], outerRing[0][1], 0)); // Close the loop
-                const geometry = new THREE.BufferGeometry().setFromPoints(points);
-                const line = new THREE.Line(geometry, material);
-                boundaryMesh.add(line);
-            }
 
-            function renderVertexHandles(verts) {
-                 while (vertexHandles.children.length) vertexHandles.remove(vertexHandles.children[0]);
-                const handleGeom = new THREE.CircleGeometry(2, 16);
-                const handleMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+                getPolygonsFromIndices(indicesList, vertices) {
+                    return indicesList.map(indices => [indices.map(i => [vertices[i].x, vertices[i].y])]);
+                }
 
-                verts.forEach((v, i) => {
-                    const handle = new THREE.Mesh(handleGeom, handleMat);
-                    handle.position.set(v.x, v.y, 0.1);
-                    handle.userData.vertexIndex = i;
-                    vertexHandles.add(handle);
-                });
-            }
+                updateScene() {
+                    const subjectPolygons = this.getPolygonsFromIndices(this.subjectPolygonIndices, this.vertices);
+                    const scale = 100;
+                    const subj_paths = subjectPolygons.map(p => p[0].map(v => ({ X: v[0] * scale, Y: v[1] * scale })));
+                    const clip_paths = this.boundaryPolygon.map(p => p.map(v => ({ X: v[0] * scale, Y: v[1] * scale })));
 
-            renderBoundary();
-            updateScene();
+                    const cpr = new ClipperLib.Clipper();
+                    cpr.AddPaths(subj_paths, ClipperLib.PolyType.ptSubject, true);
+                    cpr.AddPaths(clip_paths, ClipperLib.PolyType.ptClip, true);
 
-            // --- INTERACTIVITY ---
-            let addPolygonMode = false;
-            const newPolygonVertices = [];
-            const activePolygons = new Set();
-            const addPolygonBtn = document.getElementById('add-polygon-btn');
-            const lockPolygonBtn = document.getElementById('lock-polygon-btn');
-            const wireframeToggle = document.getElementById('wireframe-toggle');
+                    const solution_paths = new ClipperLib.Paths();
+                    cpr.Execute(ClipperLib.ClipType.ctIntersection, solution_paths, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
 
-            wireframeToggle.addEventListener('change', updateScene);
-            addPolygonBtn.addEventListener('click', () => {
-                addPolygonMode = !addPolygonMode;
-                addPolygonBtn.style.backgroundColor = addPolygonMode ? '#4caf50' : '';
-                newPolygonVertices.length = 0; // Reset on toggle
-            });
-            lockPolygonBtn.addEventListener('click', () => {
-                activePolygons.forEach(polyIndex => {
-                    lockedPolygons[polyIndex] = !lockedPolygons[polyIndex];
-                });
-                updateScene();
-            });
+                    const clippedPolygons = solution_paths.map(path => [path.map(p => ({x: p.X / scale, y: p.Y / scale}))]);
 
-            const raycaster = new THREE.Raycaster();
-            const mouse = new THREE.Vector2();
-            let draggedVertex = null;
-            const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0); // XY plane
+                    this.renderPolygons(clippedPolygons);
+                    this.renderPolygonEdges(clippedPolygons);
+                    this.renderVertexHandles();
+                }
 
-            function onPointerDown(event) {
-                mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-                mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
-                raycaster.setFromCamera(mouse, camera);
+                renderPolygons(polygons) {
+                    while (this.polygonMeshes.children.length) this.polygonMeshes.remove(this.polygonMeshes.children[0]);
+                    const isWireframe = document.getElementById('wireframe-toggle').checked;
 
-                if (addPolygonMode) {
-                    const intersectPoint = new THREE.Vector3();
-                    raycaster.ray.intersectPlane(plane, intersectPoint);
-                    newPolygonVertices.push({ x: intersectPoint.x, y: intersectPoint.y });
+                    polygons.forEach((polygon, index) => {
+                        const outerRing = polygon[0];
+                        if (!outerRing || outerRing.length < 3) return;
 
-                    // Add visual feedback for the new vertex
-                    const previewGeom = new THREE.CircleGeometry(2, 16);
-                    const previewMat = new THREE.MeshBasicMaterial({ color: 0x00ffff });
-                    const previewMesh = new THREE.Mesh(previewGeom, previewMat);
-                    previewMesh.position.set(intersectPoint.x, intersectPoint.y, 0.2);
-                    newPolygonPreview.add(previewMesh);
-
-                    if (newPolygonVertices.length === 3) {
-                        const newIndices = [];
-                        newPolygonVertices.forEach(v => {
-                            newIndices.push(vertices.length);
-                            vertices.push(v);
-                        });
-                        subjectPolygonIndices.push(newIndices);
-                        newPolygonVertices.length = 0;
-                        while(newPolygonPreview.children.length) newPolygonPreview.remove(newPolygonPreview.children[0]);
-                        addPolygonMode = false;
-                        addPolygonBtn.style.backgroundColor = '';
-                        updateScene();
-                    }
-                } else if (previewVertex.visible) {
-                    const newVertex = { x: previewVertex.position.x, y: previewVertex.position.y };
-                    const edge = findClosestEdge(previewVertex.position);
-                    if (edge) {
-                        const newIndex = vertices.length;
-                        vertices.push(newVertex);
-                        const polyIndices = subjectPolygonIndices.find(p => p.includes(edge.segment[0]) && p.includes(edge.segment[1]));
-                        if (polyIndices) {
-                            const index1 = polyIndices.indexOf(edge.segment[0]);
-                            const index2 = polyIndices.indexOf(edge.segment[1]);
-                            const insertAt = Math.max(index1, index2);
-                            polyIndices.splice(insertAt, 0, newIndex);
-                            updateScene();
+                        const shape = new THREE.Shape();
+                        shape.moveTo(outerRing[0].x, outerRing[0].y);
+                        for (let i = 1; i < outerRing.length; i++) {
+                            shape.lineTo(outerRing[i].x, outerRing[i].y);
                         }
-                    }
-                } else {
-                    const intersects = raycaster.intersectObjects(vertexHandles.children);
-                    if (intersects.length > 0) {
-                        controls.enabled = false;
-                        const handle = intersects[0].object;
-                        draggedVertex = {
-                            index: handle.userData.vertexIndex,
-                            handle: handle
-                        };
-                        // Highlight polygons connected to the dragged vertex
-                        subjectPolygonIndices.forEach((poly, i) => {
-                            if (poly.includes(draggedVertex.index)) {
-                                activePolygons.add(i);
+                        shape.closePath();
+
+                        for (let i = 1; i < polygon.length; i++) {
+                            const hole = new THREE.Path();
+                            const innerRing = polygon[i];
+                            hole.moveTo(innerRing[0].x, innerRing[0].y);
+                            for (let j = 1; j < innerRing.length; j++) {
+                                hole.lineTo(innerRing[j].x, innerRing[j].y);
                             }
+                            hole.closePath();
+                            shape.holes.push(hole);
+                        }
+
+                        const geometry = new THREE.ExtrudeGeometry(shape, { depth: 10, bevelEnabled: false });
+                        const color = this.lockedPolygons[index] ? 0xff0000 : new THREE.Color().setHSL(index / polygons.length, 0.7, 0.5);
+                        const material = new THREE.MeshPhongMaterial({
+                            color,
+                            side: THREE.DoubleSide,
+                            wireframe: isWireframe,
+                            emissive: this.activePolygons.has(index) ? 0x444444 : 0x000000
                         });
-                        updateScene();
-                    }
+                        const mesh = new THREE.Mesh(geometry, material);
+                        mesh.position.z = -10;
+                        this.polygonMeshes.add(mesh);
+                    });
                 }
-            }
-                mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-                mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
-                raycaster.setFromCamera(mouse, camera);
 
-                const intersectPoint = new THREE.Vector3();
-                raycaster.ray.intersectPlane(plane, intersectPoint);
+                renderPolygonEdges(polygons) {
+                    while (this.polygonEdges.children.length) this.polygonEdges.remove(this.polygonEdges.children[0]);
+                    const material = new THREE.LineBasicMaterial({ color: 0xffffff });
 
-                if (draggedVertex) {
-                    // Dragging a vertex
-                    const newPos = { x: intersectPoint.x, y: intersectPoint.y };
-                    if (!isIntersecting(vertices[draggedVertex.index], newPos, draggedVertex.index)) {
-                        vertices[draggedVertex.index].x = newPos.x;
-                        vertices[draggedVertex.index].y = newPos.y;
-                        updateScene();
-                    }
-                } else {
-                    // Hovering, not dragging
-                    // Hovering, not dragging
-                    const intersects = raycaster.intersectObjects(vertexHandles.children);
-                    if (intersects.length > 0) {
-                        previewVertex.visible = false;
-                        document.body.style.cursor = 'pointer';
+                    polygons.forEach(polygon => {
+                        const outerRing = polygon[0];
+                        if (!outerRing || outerRing.length < 2) return;
+                        const points = outerRing.map(p => new THREE.Vector3(p.x, p.y, 0.01));
+                        points.push(points[0].clone());
+                        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                        this.polygonEdges.add(new THREE.Line(geometry, material));
+
+                        for (let i = 1; i < polygon.length; i++) {
+                            const innerRing = polygon[i];
+                            const holePoints = innerRing.map(p => new THREE.Vector3(p.x, p.y, 0.01));
+                            holePoints.push(holePoints[0].clone());
+                            const holeGeometry = new THREE.BufferGeometry().setFromPoints(holePoints);
+                            this.polygonEdges.add(new THREE.Line(holeGeometry, material));
+                        }
+                    });
+                }
+
+                renderBoundary() {
+                    while (this.boundaryMesh.children.length) this.boundaryMesh.remove(this.boundaryMesh.children[0]);
+                    const material = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2 });
+                    const points = this.boundaryPolygon[0].map(p => new THREE.Vector3(p[0], p[1], 0));
+                    points.push(points[0].clone());
+                    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                    this.boundaryMesh.add(new THREE.Line(geometry, material));
+                }
+
+                renderVertexHandles() {
+                    while (this.vertexHandles.children.length) this.vertexHandles.remove(this.vertexHandles.children[0]);
+                    const handleGeom = new THREE.CircleGeometry(2, 16);
+                    const handleMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+                    this.vertices.forEach((v, i) => {
+                        const handle = new THREE.Mesh(handleGeom, handleMat);
+                        handle.position.set(v.x, v.y, 0.1);
+                        handle.userData.vertexIndex = i;
+                        this.vertexHandles.add(handle);
+                    });
+                }
+
+                toggleAddPolygonMode() {
+                    this.addPolygonMode = !this.addPolygonMode;
+                    document.getElementById('add-polygon-btn').style.backgroundColor = this.addPolygonMode ? '#4caf50' : '';
+                    this.newPolygonVertices.length = 0;
+                    while(this.newPolygonPreview.children.length) this.newPolygonPreview.remove(this.newPolygonPreview.children[0]);
+                }
+
+                toggleLockPolygon() {
+                    this.activePolygons.forEach(polyIndex => {
+                        this.lockedPolygons[polyIndex] = !this.lockedPolygons[polyIndex];
+                    });
+                    this.updateScene();
+                }
+
+                onPointerDown(event) {
+                    this.mouse.x = (event.clientX / this.W) * 2 - 1;
+                    this.mouse.y = - (event.clientY / this.H) * 2 + 1;
+                    this.raycaster.setFromCamera(this.mouse, this.camera);
+                    const intersectPoint = new THREE.Vector3();
+                    this.raycaster.ray.intersectPlane(this.plane, intersectPoint);
+
+                    if (this.addPolygonMode) {
+                        this.newPolygonVertices.push({ x: intersectPoint.x, y: intersectPoint.y });
+                        const previewMesh = new THREE.Mesh(new THREE.CircleGeometry(2, 16), new THREE.MeshBasicMaterial({ color: 0x00ffff }));
+                        previewMesh.position.set(intersectPoint.x, intersectPoint.y, 0.2);
+                        this.newPolygonPreview.add(previewMesh);
+
+                        if (this.newPolygonVertices.length === 3) {
+                            const newIndices = [];
+                            this.newPolygonVertices.forEach(v => {
+                                newIndices.push(this.vertices.length);
+                                this.vertices.push(v);
+                            });
+                            this.subjectPolygonIndices.push(newIndices);
+                            this.lockedPolygons.push(false);
+                            this.toggleAddPolygonMode();
+                            this.updateScene();
+                        }
                         return;
                     }
 
+                    const intersects = this.raycaster.intersectObjects(this.vertexHandles.children);
+                    if (intersects.length > 0) {
+                        this.controls.enabled = false;
+                        this.draggedVertex = { index: intersects[0].object.userData.vertexIndex };
+                        this.subjectPolygonIndices.forEach((poly, i) => {
+                            if (poly.includes(this.draggedVertex.index)) this.activePolygons.add(i);
+                        });
+                        this.updateScene();
+                        return;
+                    }
+
+                    if (this.previewVertex.visible) {
+                        const newVertex = { x: this.previewVertex.position.x, y: this.previewVertex.position.y };
+                        const edge = this.findClosestEdge(this.previewVertex.position);
+                        if (edge) {
+                            const newIndex = this.vertices.length;
+                            this.vertices.push(newVertex);
+                            const polyIndices = this.subjectPolygonIndices.find(p => p.includes(edge.segment[0]) && p.includes(edge.segment[1]));
+                            if (polyIndices) {
+                                const insertAt = Math.max(polyIndices.indexOf(edge.segment[0]), polyIndices.indexOf(edge.segment[1]));
+                                polyIndices.splice(insertAt, 0, newIndex);
+                                this.updateScene();
+                            }
+                        }
+                    }
+                }
+
+                onPointerMove(event) {
+                    this.mouse.x = (event.clientX / this.W) * 2 - 1;
+                    this.mouse.y = - (event.clientY / this.H) * 2 + 1;
+                    this.raycaster.setFromCamera(this.mouse, this.camera);
+                    const intersectPoint = new THREE.Vector3();
+                    this.raycaster.ray.intersectPlane(this.plane, intersectPoint);
+
+                    if (this.draggedVertex) {
+                        const newPos = { x: intersectPoint.x, y: intersectPoint.y };
+                        if (!this.isIntersecting(this.vertices[this.draggedVertex.index], newPos, this.draggedVertex.index)) {
+                            this.vertices[this.draggedVertex.index].x = newPos.x;
+                            this.vertices[this.draggedVertex.index].y = newPos.y;
+                            this.updateScene();
+                        }
+                    } else {
+                        const intersects = this.raycaster.intersectObjects(this.vertexHandles.children);
+                        if (intersects.length > 0) {
+                            this.previewVertex.visible = false;
+                            document.body.style.cursor = 'pointer';
+                        } else {
+                            const closestEdge = this.findClosestEdge(intersectPoint);
+                            if (closestEdge && closestEdge.distance < 5) {
+                                this.previewVertex.position.copy(closestEdge.point);
+                                this.previewVertex.visible = true;
+                                document.body.style.cursor = 'copy';
+                            } else {
+                                this.previewVertex.visible = false;
+                                document.body.style.cursor = 'default';
+                            }
+                        }
+                    }
+                }
+
+                onPointerUp(event) {
+                    if (this.draggedVertex) this.checkPolygonAreas();
+                    this.controls.enabled = true;
+                    this.draggedVertex = null;
+                    this.activePolygons.clear();
+                    this.updateScene();
+                }
+
+                findClosestEdge(point) {
                     let closestEdge = null;
                     let minDistance = Infinity;
-
-                    for (const polyIndices of subjectPolygonIndices) {
+                    for (const polyIndices of this.subjectPolygonIndices) {
                         for (let i = 0; i < polyIndices.length; i++) {
-                            const v1 = vertices[polyIndices[i]];
-                            const v2 = vertices[polyIndices[(i + 1) % polyIndices.length]];
-                            const closestPoint = getClosestPointOnSegment(intersectPoint, v1, v2);
-                            const distance = intersectPoint.distanceTo(closestPoint);
-
+                            const v1 = this.vertices[polyIndices[i]];
+                            const v2 = this.vertices[polyIndices[(i + 1) % polyIndices.length]];
+                            const closestPoint = this.getClosestPointOnSegment(point, v1, v2);
+                            const distance = point.distanceTo(closestPoint);
                             if (distance < minDistance) {
                                 minDistance = distance;
-                                closestEdge = { point: closestPoint, segment: [polyIndices[i], polyIndices[(i + 1) % polyIndices.length]] };
+                                closestEdge = { point: closestPoint, segment: [polyIndices[i], polyIndices[(i + 1) % polyIndices.length]], distance };
                             }
                         }
                     }
-
-                    if (minDistance < 5) { // Hover threshold
-                        previewVertex.position.copy(closestEdge.point);
-                        previewVertex.visible = true;
-                        document.body.style.cursor = 'copy';
-                    } else {
-                        previewVertex.visible = false;
-                        document.body.style.cursor = 'default';
-                    }
-                }
-            }
-
-            function onPointerUp(event) {
-                if (draggedVertex) {
-                    checkPolygonAreas();
-                }
-                controls.enabled = true;
-                draggedVertex = null;
-                activePolygons.clear();
-                updateScene();
-            }
-
-            window.addEventListener('pointerdown', onPointerDown);
-            window.addEventListener('pointermove', onPointerMove);
-            window.addEventListener('pointerup', onPointerUp);
-
-            function findClosestEdge(point) {
-                let closestEdge = null;
-                let minDistance = Infinity;
-
-                for (const polyIndices of subjectPolygonIndices) {
-                    for (let i = 0; i < polyIndices.length; i++) {
-                        const v1 = vertices[polyIndices[i]];
-                        const v2 = vertices[polyIndices[(i + 1) % polyIndices.length]];
-                        const closestPoint = getClosestPointOnSegment(point, v1, v2);
-                        const distance = point.distanceTo(closestPoint);
-
-                        if (distance < minDistance) {
-                            minDistance = distance;
-                            closestEdge = { point: closestPoint, segment: [polyIndices[i], polyIndices[(i + 1) % polyIndices.length]] };
-                        }
-                    }
-                }
-                return closestEdge;
-            }
-
-            function getClosestPointOnSegment(p, a, b) {
-                const atob = { x: b.x - a.x, y: b.y - a.y };
-                const atop = { x: p.x - a.x, y: p.y - a.y };
-                const len = atob.x * atob.x + atob.y * atob.y;
-                let dot = atop.x * atob.x + atop.y * atob.y;
-                const t = Math.min(1, Math.max(0, dot / len));
-                dot = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
-                return new THREE.Vector3(a.x + atob.x * t, a.y + atob.y * t, 0.1);
-            }
-
-            function isIntersecting(p1, p2, draggedVertexIndex) {
-                // Basic line-segment intersection function
-                function segmentsIntersect(p1, p2, p3, p4) {
-                    const d = (p4.y - p3.y) * (p2.x - p1.x) - (p4.x - p3.x) * (p2.y - p1.y);
-                    if (d === 0) return false; // Parallel lines
-                    const t = ((p4.x - p3.x) * (p1.y - p3.y) - (p4.y - p3.y) * (p1.x - p3.x)) / d;
-                    const u = -((p2.x - p1.x) * (p1.y - p3.y) - (p2.y - p1.y) * (p1.x - p3.x)) / d;
-                    return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+                    return closestEdge;
                 }
 
-                for (let i = 0; i < subjectPolygonIndices.length; i++) {
-                    if (lockedPolygons[i]) {
-                        const polyIndices = subjectPolygonIndices[i];
-                        for (let j = 0; j < polyIndices.length; j++) {
-                            const v1Index = polyIndices[j];
-                            const v2Index = polyIndices[(j + 1) % polyIndices.length];
+                getClosestPointOnSegment(p, a, b) {
+                    const atob = { x: b.x - a.x, y: b.y - a.y };
+                    const atop = { x: p.x - a.x, y: p.y - a.y };
+                    const lenSq = atob.x * atob.x + atob.y * atob.y;
+                    const dot = atop.x * atob.x + atop.y * atob.y;
+                    const t = Math.min(1, Math.max(0, dot / lenSq));
+                    return new THREE.Vector3(a.x + atob.x * t, a.y + atob.y * t, 0.1);
+                }
 
-                            // Skip edges connected to the dragged vertex
-                            if (v1Index === draggedVertexIndex || v2Index === draggedVertexIndex) {
-                                continue;
-                            }
-
-                            const v1 = vertices[v1Index];
-                            const v2 = vertices[v2Index];
-
-                            if (segmentsIntersect(p1, p2, v1, v2)) {
-                                return true;
+                isIntersecting(p1, p2, draggedVertexIndex) {
+                    const segmentsIntersect = (p1, p2, p3, p4) => {
+                        const d = (p4.y - p3.y) * (p2.x - p1.x) - (p4.x - p3.x) * (p2.y - p1.y);
+                        if (d === 0) return false;
+                        const t = ((p4.x - p3.x) * (p1.y - p3.y) - (p4.y - p3.y) * (p1.x - p3.x)) / d;
+                        const u = -((p2.x - p1.x) * (p1.y - p3.y) - (p2.y - p1.y) * (p1.x - p3.x)) / d;
+                        return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+                    };
+                    for (let i = 0; i < this.subjectPolygonIndices.length; i++) {
+                        if (this.lockedPolygons[i]) {
+                            const polyIndices = this.subjectPolygonIndices[i];
+                            for (let j = 0; j < polyIndices.length; j++) {
+                                const v1Index = polyIndices[j];
+                                const v2Index = polyIndices[(j + 1) % polyIndices.length];
+                                if (v1Index === draggedVertexIndex || v2Index === draggedVertexIndex) continue;
+                                const v1 = this.vertices[v1Index];
+                                const v2 = this.vertices[v2Index];
+                                if (segmentsIntersect(p1, p2, v1, v2)) return true;
                             }
                         }
                     }
+                    return false;
                 }
-                return false;
-            }
 
-            function polygonArea(verts) {
-                let area = 0;
-                for (let i = 0, j = verts.length - 1; i < verts.length; j = i++) {
-                    area += (verts[j][0] + verts[i][0]) * (verts[j][1] - verts[i][1]);
-                }
-                return Math.abs(area / 2);
-            }
-
-            function checkPolygonAreas() {
-                const minArea = 10;
-                const subjectPolygons = getPolygonsFromIndices(subjectPolygonIndices, vertices);
-
-                for (let i = subjectPolygonIndices.length - 1; i >= 0; i--) {
-                    const poly = subjectPolygons[i];
-                    if (poly && poly[0] && polygonArea(poly[0]) < minArea) {
-                        subjectPolygonIndices.splice(i, 1);
+                polygonArea(verts) {
+                    let area = 0;
+                    for (let i = 0, j = verts.length - 1; i < verts.length; j = i++) {
+                        area += (verts[j].x + verts[i].x) * (verts[j].y - verts[i].y);
                     }
+                    return Math.abs(area / 2);
                 }
-                updateScene();
-            }
 
+                checkPolygonAreas() {
+                    const minArea = 10;
+                    const subjectPolygons = this.getPolygonsFromIndices(this.subjectPolygonIndices, this.vertices);
+                    for (let i = this.subjectPolygonIndices.length - 1; i >= 0; i--) {
+                        if (subjectPolygons[i] && subjectPolygons[i][0] && this.polygonArea(subjectPolygons[i][0]) < minArea) {
+                            this.subjectPolygonIndices.splice(i, 1);
+                            this.lockedPolygons.splice(i, 1);
+                        }
+                    }
+                    this.updateScene();
+                }
 
-            // --- MAIN ANIMATION LOOP ---
-            renderer.setAnimationLoop(animate);
+                animate() {
+                    this.controls.update();
+                    this.renderer.render(this.scene, this.camera);
+                }
 
-            function animate() {
-                controls.update();
-                renderer.render(scene, camera);
-            }
+                setupRenderer() {
+                    const r = new THREE.WebGLRenderer({ antialias: true });
+                    r.setSize(this.W, this.H);
+                    document.body.appendChild(r.domElement);
+                    r.setPixelRatio(window.devicePixelRatio);
+                    return r;
+                }
 
-            // --- HELPER / UTILITY FUNCTIONS ---
+                setupScene() {
+                    const s = new THREE.Scene();
+                    s.background = new THREE.Color(0x0b0f14);
+                    const grid = new THREE.GridHelper(500, 50, 0x808080, 0x404040);
+                    grid.rotation.x = Math.PI / 2;
+                    s.add(grid);
+                    const ambientLight = new THREE.AmbientLight(0x404040);
+                    s.add(ambientLight);
+                    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+                    directionalLight.position.set(1, 1, 1);
+                    s.add(directionalLight);
+                    return s;
+                }
 
-            function setupRenderer() {
-                const r = new THREE.WebGLRenderer({
-                    antialias: true
-                });
-                r.setSize(W, H);
-                document.body.appendChild(r.domElement);
-                r.setPixelRatio(window.devicePixelRatio);
-                return r;
-            }
+                setupCamera(w, h) {
+                    const c = new THREE.PerspectiveCamera(50, w / h, 0.1, 1000);
+                    c.position.set(0, 0, 250);
+                    return c;
+                }
 
-            function setupScene() {
-                const s = new THREE.Scene();
-                s.background = new THREE.Color(0x0b0f14);
-                const grid = new THREE.GridHelper(500, 50, 0x808080, 0x404040);
-                grid.rotation.x = Math.PI / 2;
-                s.add(grid);
+                setupControls(camera, domElement) {
+                    const c = new OrbitControls(camera, domElement);
+                    c.enableDamping = true;
+                    return c;
+                }
 
-                const ambientLight = new THREE.AmbientLight(0x404040);
-                s.add(ambientLight);
-
-                const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
-                directionalLight.position.set(1, 1, 1);
-                s.add(directionalLight);
-
-                return s;
-            }
-
-            function setupCamera(w, h) {
-                const c = new THREE.PerspectiveCamera(50, w / h, 0.1, 1000);
-                c.position.set(150, 150, 250); // Angled view
-                return c;
-            }
-
-            function setupControls(camera, domElement) {
-                const c = new OrbitControls(camera, domElement);
-                c.enableDamping = true;
-                return c;
-            }
-
-            // Window resize handler
-            function resize() {
-                const w = innerWidth;
-                const h = innerHeight;
-                renderer.setSize(w, h);
-                camera.aspect = w / h;
-                camera.updateProjectionMatrix();
-            }
-            window.addEventListener('resize', resize);
-
-            // Simple PRNG (Pseudo-Random Number Generator)
-            function mulberry32(a) {
-                return function() {
-                    let t = a += 0x6D2B79F5;
-                    t = Math.imul(t ^ t >>> 15, t | 1);
-                    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
-                    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+                resize() {
+                    this.W = window.innerWidth;
+                    this.H = window.innerHeight;
+                    this.renderer.setSize(this.W, this.H);
+                    this.camera.aspect = this.W / this.H;
+                    this.camera.updateProjectionMatrix();
                 }
             }
+
+            new PolygonEditor();
+
         </script>
     </body>
 </html>
