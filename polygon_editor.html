@@ -310,6 +310,30 @@
                     this.updateScene();
                 }
 
+                deleteVertex(vertexIndex) {
+                    // Remove polygons that use this vertex
+                    for (let i = this.subjectPolygonIndices.length - 1; i >= 0; i--) {
+                        if (this.subjectPolygonIndices[i].includes(vertexIndex)) {
+                            this.subjectPolygonIndices.splice(i, 1);
+                            this.lockedPolygons.splice(i, 1);
+                        }
+                    }
+
+                    // Remove the vertex
+                    this.vertices.splice(vertexIndex, 1);
+
+                    // Re-index all polygons
+                    for (let i = 0; i < this.subjectPolygonIndices.length; i++) {
+                        const poly = this.subjectPolygonIndices[i];
+                        for (let j = 0; j < poly.length; j++) {
+                            if (poly[j] > vertexIndex) {
+                                poly[j]--;
+                            }
+                        }
+                    }
+                    this.updateScene();
+                }
+
                 saveState() {
                     const state = {
                         vertices: this.vertices,
@@ -363,12 +387,18 @@
 
                     const intersects = this.raycaster.intersectObjects(this.vertexHandles.children);
                     if (intersects.length > 0) {
-                        this.controls.enabled = false;
-                        this.draggedVertex = { index: intersects[0].object.userData.vertexIndex };
-                        this.subjectPolygonIndices.forEach((poly, i) => {
-                            if (poly.includes(this.draggedVertex.index)) this.activePolygons.add(i);
-                        });
-                        this.updateScene();
+                        const vertexIndex = intersects[0].object.userData.vertexIndex;
+                        if (event.ctrlKey) {
+                            this.deleteVertex(vertexIndex);
+                        } else {
+                            this.activePolygons.clear(); // Clear previous selection
+                            this.controls.enabled = false;
+                            this.draggedVertex = { index: vertexIndex };
+                            this.subjectPolygonIndices.forEach((poly, i) => {
+                                if (poly.includes(this.draggedVertex.index)) this.activePolygons.add(i);
+                            });
+                            this.updateScene();
+                        }
                         return;
                     }
 
@@ -425,7 +455,7 @@
                     if (this.draggedVertex) this.checkPolygonAreas();
                     this.controls.enabled = true;
                     this.draggedVertex = null;
-                    this.activePolygons.clear();
+                    // this.activePolygons.clear(); // Keep selection sticky
                     this.updateScene();
                 }
 
