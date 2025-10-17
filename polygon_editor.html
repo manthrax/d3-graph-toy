@@ -36,7 +36,11 @@
             }</script>
     </head>
     <body>
-        <div id="info">Polygon Editor</div>
+        <div id="info">
+            Polygon Editor
+            <br>
+            <label><input type="checkbox" id="wireframe-toggle"> Wireframe</label>
+        </div>
         <script src="https://cdn.jsdelivr.net/npm/clipper-lib@6.4.2/clipper.js"></script>
         <script type="module">
             import * as THREE from "three";
@@ -117,7 +121,7 @@
                 const clippedPolygons = solution_paths.map(path => [path.map(p => [p.X / scale, p.Y / scale])]);
 
                 // 3. Render the resulting polygons
-                renderPolygons(clippedPolygons, 0x00ff00);
+                renderPolygons(clippedPolygons);
 
                 // 4. Render the polygon edges
                 renderPolygonEdges(clippedPolygons, 0xffffff);
@@ -159,10 +163,11 @@
                 });
             }
 
-            function renderPolygons(polygons, color) {
+            function renderPolygons(polygons) {
                 while (polygonMeshes.children.length) polygonMeshes.remove(polygonMeshes.children[0]);
+                const isWireframe = document.getElementById('wireframe-toggle').checked;
 
-                polygons.forEach(polygon => {
+                polygons.forEach((polygon, index) => {
                     if (!polygon || !polygon[0] || polygon[0].length < 3) return;
                     const shape = new THREE.Shape();
                     const outerRing = polygon[0];
@@ -189,8 +194,14 @@
                         bevelEnabled: false,
                     };
                     const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-                    const material = new THREE.MeshPhongMaterial({ color, side: THREE.DoubleSide });
+                    const color = new THREE.Color().setHSL(index / polygons.length, 0.7, 0.5);
+                    const material = new THREE.MeshPhongMaterial({
+                        color,
+                        side: THREE.DoubleSide,
+                        wireframe: isWireframe
+                    });
                     const mesh = new THREE.Mesh(geometry, material);
+                    mesh.position.z = -10; // Extrude "down"
                     polygonMeshes.add(mesh);
                 });
             }
@@ -211,6 +222,9 @@
             updateScene();
 
             // --- INTERACTIVITY ---
+            const wireframeToggle = document.getElementById('wireframe-toggle');
+            wireframeToggle.addEventListener('change', updateScene);
+
             const raycaster = new THREE.Raycaster();
             const mouse = new THREE.Vector2();
             let draggedVertex = null;
