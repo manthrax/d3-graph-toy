@@ -149,7 +149,13 @@
                     window.addEventListener('pointermove', (e) => this.onPointerMove(e));
                     window.addEventListener('pointerup', (e) => this.onPointerUp(e));
                     window.addEventListener('resize', () => this.resize());
-                    window.addEventListener('keydown', (e) => { if (e.key === 'Control') this.onPointerMove(e); });
+                    window.addEventListener('keydown', (e) => {
+                        if (e.key === 'Control') this.onPointerMove(e);
+                        if (e.key === 'Delete' && this.draggedVertex) {
+                            this.deleteVertex(this.draggedVertex.index);
+                            this.draggedVertex = null;
+                        }
+                    });
                     window.addEventListener('keyup', (e) => { if (e.key === 'Control') this.onPointerMove(e); });
                 }
 
@@ -182,7 +188,7 @@
                         const co = new ClipperLib.ClipperOffset();
                         const offset_paths = new ClipperLib.Paths();
                         co.AddPaths(solution_paths, ClipperLib.JoinType.jtMiter, ClipperLib.EndType.etClosedPolygon);
-                        co.Execute(offset_paths, -2 * scale); // Inset by 2 units
+                        co.Execute(offset_paths, -5 * scale); // Inset by 5 units
                         offset_paths.forEach(p => finalPolygons.push(p.map(pt => [pt.X / scale, pt.Y / scale])));
                     });
 
