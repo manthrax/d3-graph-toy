@@ -148,6 +148,8 @@
                     window.addEventListener('pointermove', (e) => this.onPointerMove(e));
                     window.addEventListener('pointerup', (e) => this.onPointerUp(e));
                     window.addEventListener('resize', () => this.resize());
+                    window.addEventListener('keydown', (e) => { if (e.key === 'Control') this.onPointerMove(e); });
+                    window.addEventListener('keyup', (e) => { if (e.key === 'Control') this.onPointerMove(e); });
                 }
 
                 createInitialGeometry() {
@@ -245,7 +247,12 @@
 
                 renderPolygonEdges(polygons) {
                     while (this.polygonEdges.children.length) this.polygonEdges.remove(this.polygonEdges.children[0]);
-                    const material = new THREE.LineBasicMaterial({ color: 0xffffff });
+                    const material = new THREE.LineBasicMaterial({
+                        color: 0xffffff,
+                        polygonOffset: true,
+                        polygonOffsetFactor: -1,
+                        polygonOffsetUnits: -1
+                    });
 
                     polygons.forEach(polygon => {
                         const outerRing = polygon[0];
@@ -307,31 +314,44 @@
                         this.lockedPolygons.splice(index, 1);
                     });
                     this.activePolygons.clear();
+                    this.cleanupOrphanedVertices();
                     this.updateScene();
                 }
 
                 deleteVertex(vertexIndex) {
-                    // Remove polygons that use this vertex
+                    // Remove the vertex from any polygons that use it
                     for (let i = this.subjectPolygonIndices.length - 1; i >= 0; i--) {
-                        if (this.subjectPolygonIndices[i].includes(vertexIndex)) {
+                        const poly = this.subjectPolygonIndices[i];
+                        const indexInPoly = poly.indexOf(vertexIndex);
+                        if (indexInPoly !== -1) {
+                            poly.splice(indexInPoly, 1);
+                        }
+                        // If the polygon has fewer than 3 vertices, remove it
+                        if (poly.length < 3) {
                             this.subjectPolygonIndices.splice(i, 1);
                             this.lockedPolygons.splice(i, 1);
                         }
                     }
+                    this.cleanupOrphanedVertices();
+                    this.updateScene();
+                }
 
-                    // Remove the vertex
-                    this.vertices.splice(vertexIndex, 1);
-
-                    // Re-index all polygons
-                    for (let i = 0; i < this.subjectPolygonIndices.length; i++) {
-                        const poly = this.subjectPolygonIndices[i];
-                        for (let j = 0; j < poly.length; j++) {
-                            if (poly[j] > vertexIndex) {
-                                poly[j]--;
+                cleanupOrphanedVertices() {
+                    const allUsedIndices = new Set([].concat(...this.subjectPolygonIndices));
+                    for (let i = this.vertices.length - 1; i >= 0; i--) {
+                        if (!allUsedIndices.has(i)) {
+                            this.vertices.splice(i, 1);
+                            // Re-index all polygons
+                            for (let j = 0; j < this.subjectPolygonIndices.length; j++) {
+                                const poly = this.subjectPolygonIndices[j];
+                                for (let k = 0; k < poly.length; k++) {
+                                    if (poly[k] > i) {
+                                        poly[k]--;
+                                    }
+                                }
                             }
                         }
                     }
-                    this.updateScene();
                 }
 
                 saveState() {
@@ -436,7 +456,7 @@
                         const intersects = this.raycaster.intersectObjects(this.vertexHandles.children);
                     if (intersects.length > 0 && intersects[0].distance < 10) { // Increased radius
                             this.previewVertex.visible = false;
-                            document.body.style.cursor = 'pointer';
+                            document.body.style.cursor = event.ctrlKey ? 'cell' : 'pointer';
                         } else {
                             const closestEdge = this.findClosestEdge(intersectPoint);
                             if (closestEdge && closestEdge.distance < 5) {
