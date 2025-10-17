@@ -147,27 +147,33 @@
         function writeLabel(i) {
             const n = nodes[i];
             const uv = atlas.uvs[i];
-            const px = atlas.rects[i];
+            const px = atlas.rects[i]; // The rectangle for this label in the atlas (in pixels)
 
-            // Calculate scale to fit label in header with padding
-            const targetW = Math.min(px.w, n.w * 0.9 * atlas.ppu);
-            const scale = targetW / px.w;
-            const lw = (px.w * scale) / atlas.ppu * 5;
-            const lh = (px.h * scale) / atlas.ppu * 5;
+            // The aspect ratio of the label text from the atlas
+            const aspect = px.w / px.h;
 
-            // Position label: (x - w/2 + lw/2) for left-aligned, centered vertically
+            // Define the world-space dimensions of the label plane.
+            // We'll make the label's height fit the node's header height, minus some padding.
+            const headerWorldH = n.h * headerHFrac;
+            const labelWorldH = headerWorldH * 0.8; // Use 80% of header height for padding
+            const labelWorldW = labelWorldH * aspect;
+
+            // Position the label. We want it centered horizontally in the node,
+            // and centered vertically within the colored header strip.
+            const headerCenterY = n.y + (n.h / 2) - (headerWorldH / 2);
+
             _m.compose(
                 new THREE.Vector3(
-                    n.x - n.w / 2 + lw / 2 + (labelPad / atlas.ppu),
-                    n.y + (n.h / 2 - (lh / 2)) - (labelPad / atlas.ppu),
-                    0.2
+                    n.x,              // Horizontally centered on the node
+                    headerCenterY,    // Vertically centered in the header
+                    0.2               // Z-offset to appear on top
                 ),
-                _q,
-                new THREE.Vector3(lw, lh, 1)
+                _q, // No rotation
+                new THREE.Vector3(labelWorldW, labelWorldH, 1) // Scale the 1x1 plane
             );
             labelMesh.setMatrixAt(i, _m);
 
-            // Set UV attributes for instanced shader
+            // Set the UV attributes for the instanced shader to select the correct part of the atlas
             const arr = labelMesh.geometry.getAttribute('instanceUv').array;
             arr[i * 4 + 0] = uv.x; arr[i * 4 + 1] = uv.y;
             arr[i * 4 + 2] = uv.w; arr[i * 4 + 3] = uv.h;
