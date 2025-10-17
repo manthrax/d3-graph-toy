@@ -30,9 +30,9 @@
         <script type="importmap">
             {
                 "imports": {
-                    "three": "./three.module.js",
-                    "three/addons/": "./",
-                    "polygon-clipping": "./polygon-clipping.esm.js"
+                    "three": "https://cdn.jsdelivr.net/npm/three@0.161/build/three.module.js",
+                    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161/examples/jsm/",
+                    "polygon-clipping": "https://cdn.jsdelivr.net/npm/@labelbox/polygon-clipping@0.0.5/dist/polygon-clipping.esm.js"
                 }
             }</script>
     </head>
@@ -40,7 +40,7 @@
         <div id="info">Polygon Editor</div>
         <script type="module">
             import * as THREE from "three";
-            import { OrbitControls } from "./OrbitControls.js";
+            import { OrbitControls } from "three/addons/controls/OrbitControls.js";
             import clip from "polygon-clipping";
 
             // --- CORE CONFIGURATION ---
