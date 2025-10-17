@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <title>Three.js Instanced Graph Editor Prototype</title>
+    <style>
+        html,body {
+            height: 100%;
+            margin: 0;
+            background: #0c0f14;
+            color: #ddd;
+            font: 13px/1.3 system-ui
+        }
+
+        #info {
+            position: fixed;
+            top: 8px;
+            left: 10px;
+            background: #111a;
+            border: 1px solid #333;
+            padding: 6px 8px;
+            border-radius: 6px
+        }
+
+        canvas {
+            display: block
+        }
+    </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.161/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161/examples/jsm/"
+            }
+        }</script>
+    <div id="info">LMB: rotate • MMB: pan • RMB: rotate • Wheel: zoom</div>
+    <script type="module">
+        import*as THREE from "three";
+        import {OrbitControls} from "three/addons/controls/OrbitControls.js";
+        
+        import * as d3 from "https://cdn.skypack.dev/d3-force";
+        const NODE_COUNT = 2000;
+        const EDGE_COUNT = (NODE_COUNT * .52)|0;
+
+        
+        const W = innerWidth
+          , H = innerHeight;
+        const renderer = new THREE.WebGLRenderer({
+            antialias: true
+        });
+        renderer.setSize(W, H);
+        document.body.appendChild(renderer.domElement);
+        renderer.setPixelRatio(devicePixelRatio);
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0b0f14);
+        const camera = new THREE.PerspectiveCamera(50,W / H,0.5,10000);
+        camera.position.set(0, 80, 180);
+        const controls = new OrbitControls(camera,renderer.domElement);
+        controls.enableDamping = true;
+
+        const grid = new THREE.GridHelper(600,60,0x808080,0x202020);//0x233,0x122);
+        grid.rotation.x = Math.PI / 2;
+        scene.add(grid);
+
+        // ---------- Graph data ----------
+        const rnd = mulberry32(0xC0FFEE);
+        const labels = Array.from({
+            length: NODE_COUNT
+        }, (_, i) => "Node " + i);
+        const nodes = labels.map( (label, i) => ({
+            id: i,
+            label,
+            x: (rnd() * 2 - 1) * 250,
+            y: (rnd() * 2 - 1) * 150,
+            z: 0,
+            w: 20 + rnd() * 20,
+            h: 10 + rnd() * 10,
+            color: new THREE.Color().setHSL(rnd(), 0.55, 0.55)
+        }));
+        // sockets: 2 per node (left/right)
+        const socketsPerNode = 2;
+        const sockets = [];
+        for (const n of nodes) {
+            sockets.push({
+                node: n.id,
+                side: -1,
+                yOff: 0
+            });
+            // left
+            sockets.push({
+                node: n.id,
+                side: +1,
+                yOff: 0
+            });
+            // right
+        }
+        // edges: random pairs
+        const edges = [];
+        for (let i = 0; i < EDGE_COUNT; i++) {
+            const a = Math.floor(rnd() * nodes.length)
+              , b = Math.floor(rnd() * nodes.length);
+            if (a === b)
+                continue;
+            edges.push({
+                a: a * 2 + 1,
+                b: b * 2 + 0
+            });
+            // right socket of a to left socket of b
+        }
+
+
+        //Relaxation
+
+        function Relaxer(){
+            // Your connections
+            const links = edges.map(edge=>{
+                return {source:(edge.a/2)|0,target:(edge.b/2)|0}
+            })
+/*            [
+                { source: "A", target: "B" },
+                { source: "B", target: "C" },
+                // ...
+            ];
+*/
+            // Map node IDs to node objects for the links array
+            const linkData = links.map(link => ({
+                source: nodes.find(n => n.id === link.source),
+                target: nodes.find(n => n.id === link.target)
+            }));
+                    // A higher velocity decay (e.g., 0.6) makes it settle faster.
+            const simulation = d3.forceSimulation(nodes)
+                .velocityDecay(0.6)
+                .alphaDecay(0.02)
+                .stop(); // We stop it and run it manually in the Three.js loop
+
+
+            simulation
+                // 1. Repulsion force (to spread nodes out)
+                .force("charge", d3.forceManyBody().strength(-10))
+            
+                // 2. Attraction force (along edges)
+                .force("link", d3.forceLink(linkData).id(d => d.id).distance(1500))
+            
+                // 3. Centering force (optional, keeps the graph centered)
+                .force("center", d3.forceCenter(0, 0));
+
+            this.update=(force=false)=>{
+                const stepsPerFrame = 1;
+                // --- D3-Force Relaxation ---
+                if (force || (simulation.alpha() > simulation.alphaMin())) {
+                    // Run a few steps of the simulation
+                    for (let i = 0; i < stepsPerFrame; i++) {
+                        simulation.tick();
+                    }
+                    writeAll();
+                }
+            }
+        }
+        let relaxer = new Relaxer()
+        
+        //for (let r = 0; r < 100; r++) 
+        //    relaxer.update();
+        /*
+        let v0 = new THREE.Vector3();
+        let v1 = new THREE.Vector3();
+        let v2 = new THREE.Vector3();
+        let cent = new THREE.Vector3();
+        let amt = .5;
+        for (let r = 0; r < 1000; r++,
+        amt *= .9) {
+            edges.forEach(edge => {
+                let na = nodes[(edge.a / 2) | 0]
+                let nb = nodes[(edge.b / 2) | 0]
+                v0.copy(na);
+                v1.copy(nb);
+                v2.copy(nb).sub(na);
+                if(v2.length<200)v2.setLength(200);
+                //if (v2.length() > 200) {
+                    v2.multiplyScalar(amt);
+                    THREE.Vector3.prototype.add.call(na, v2);
+                    THREE.Vector3.prototype.sub.call(nb, v2);
+                //}
+                if(v0.distanceTo(cent)<100)THREE.Vector3.prototype.copy.call(na,v0.setLength(400))
+                if(v1.distanceTo(cent)<100)THREE.Vector3.prototype.copy.call(nb,v1.setLength(400))
+            }
+            );
+        }*/
+        
+
+        // ---------- Label atlas ----------
+        const atlas = buildTextAtlas(labels, {
+            font: "24px system-ui",
+            padding: 8,
+            maxW: 2048
+        });
+        const atlasTex = new THREE.CanvasTexture(atlas.canvas);
+
+        //document.body.appendChild(atlas.canvas);
+        //Object.assign(atlas.canvas.style,{position:'absolute',left:'0px',top:'0px',zIndex:10,pointerEvents:'none'})
+        document.body.style.overflow='hidden';
+        
+        atlasTex.minFilter = THREE.LinearMipMapLinearFilter;
+        atlasTex.magFilter = THREE.LinearFilter;
+        atlasTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+
+        // ---------- Shared plane and circle ----------
+        const plane = new THREE.PlaneGeometry(1,1);
+        const circle = new THREE.CircleGeometry(0.5,24);
+
+        // ---------- Instanced node bodies ----------
+        const nodeBodyMat = new THREE.MeshBasicMaterial({
+            color: 0xffffff
+        });
+        const nodeBody = new THREE.InstancedMesh(plane,nodeBodyMat,NODE_COUNT);
+        nodeBody.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        scene.add(nodeBody);
+        nodeBody.frustumCulled = false;
+
+        // ---------- Instanced headers (colored) ----------
+        const headerMat = new THREE.MeshBasicMaterial({
+            depthWrite: false
+        });
+        const header = new THREE.InstancedMesh(plane,headerMat,NODE_COUNT);
+        header.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        header.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(NODE_COUNT * 3),3);
+        scene.add(header);
+        header.frustumCulled = false;
+        //header.position.y += 5;
+
+        // ---------- Instanced labels (atlas UV per-instance) ----------
+        const labelMat = new THREE.MeshBasicMaterial({
+            map: atlasTex,
+            transparent: true,
+            depthWrite: false
+        });
+        labelMat.onBeforeCompile = (shader) => {
+            shader.vertexShader = shader.vertexShader.replace('#include <uv_vertex>', `#include <uv_vertex>
+#ifdef USE_MAP
+#ifdef USE_INSTANCING
+  vMapUv = uv * instanceUv.zw + instanceUv.xy; // scale + offset
+#endif
+#endif
+`);
+            //if(!shader.defines)shader.defines={}
+            //shader.defines.USE_INSTANCING = "";
+            shader.vertexShader = shader.vertexShader.replace('#include <common>', `#include <common>\nattribute vec4 instanceUv;`);
+        }
+        ;
+        const labelMesh = new THREE.InstancedMesh(plane,labelMat,NODE_COUNT);
+        labelMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        labelMesh.geometry.setAttribute('instanceUv', new THREE.InstancedBufferAttribute(new Float32Array(NODE_COUNT * 4),4));
+        scene.add(labelMesh);
+        labelMesh.frustumCulled = false;
+
+        // ---------- Instanced sockets ----------
+        const socketMat = new THREE.MeshBasicMaterial({
+            color: 0x99c1ff
+        });
+        const socketMesh = new THREE.InstancedMesh(circle,socketMat,sockets.length);
+        socketMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        scene.add(socketMesh);        
+        socketMesh.frustumCulled = false;
+
+
+        // ---------- Lines for edges ----------
+        const linePos = new Float32Array(edges.length * 2 * 3);
+        const lineGeom = new THREE.BufferGeometry();
+        lineGeom.setAttribute('position', new THREE.BufferAttribute(linePos,3));
+        const lineMat = new THREE.LineBasicMaterial({
+            color: 0x88a,
+            transparent: true,
+            opacity: 0.8,
+            depthWrite: false
+        });
+        const lines = new THREE.LineSegments(lineGeom,lineMat);
+        lines.frustumCulled = false;
+        scene.add(lines);
+        lines.position.z -= 1.
+
+        // ---------- Bake instance transforms and attributes ----------
+        const _m = new THREE.Matrix4()
+          , _q = new THREE.Quaternion();
+        const _v = new THREE.Vector3()
+          , _s = new THREE.Vector3(1,1,1);
+
+        const headerHFrac = 0.28;
+        const labelPad = 4;
+        let writeLabel = (i) => {
+
+            const n = nodes[i];
+            // label rect sized by atlas glyph w/h, centered in header with padding
+            const uv = atlas.uvs[i];
+            // {x,y,w,h} in UV space
+            const px = atlas.rects[i];
+            // pixel rect
+            const targetW = Math.min(px.w, n.w * 0.9 * atlas.ppu);
+            // clamp to panel width
+            const scale = targetW / px.w;
+            const lw = (px.w * scale) / atlas.ppu * 5;
+            const lh = (px.h * scale) / atlas.ppu * 5;
+            _m.compose(new THREE.Vector3(n.x - n.w / 2 + lw / 2 + (labelPad / atlas.ppu),n.y + (n.h / 2 - (lh / 2)) - (labelPad / atlas.ppu),0.2), _q, new THREE.Vector3(lw,lh,1));
+            labelMesh.setMatrixAt(i, _m);
+            const arr = labelMesh.geometry.getAttribute('instanceUv').array;
+            arr[i * 4 + 0] = uv.x;
+            arr[i * 4 + 1] = uv.y;
+            arr[i * 4 + 2] = uv.w;
+            arr[i * 4 + 3] = uv.h;
+        }
+
+        let writeNode = (i) => {
+            const n = nodes[i];
+            // body
+            _m.compose(new THREE.Vector3(n.x,n.y,0.1), _q, new THREE.Vector3(n.w,n.h,1));
+            nodeBody.setMatrixAt(i, _m);
+
+            // header strip
+            const hh = n.h * headerHFrac;
+            _m.compose(new THREE.Vector3(n.x,n.y + (n.h / 2 - hh / 2),0.2), _q, new THREE.Vector3(n.w,hh,1));
+            header.setMatrixAt(i, _m);
+            header.instanceColor.setXYZ(i, n.color.r, n.color.g, n.color.b);
+
+            writeLabel(i)
+        }
+
+
+        let writeSocket=(i)=>{
+            const s = sockets[i];
+            const n = nodes[s.node];
+            const r = Math.min(n.w, n.h) * 0.08;
+            const sx = n.x + (s.side < 0 ? -n.w / 2 - r * 0.25 : n.w / 2 + r * 0.25);
+            const sy = n.y + s.yOff;
+            _m.compose(new THREE.Vector3(sx,sy,0.003), _q, new THREE.Vector3(r,r,1));
+            socketMesh.setMatrixAt(i, _m);
+        }
+        
+
+        let writeEdge = (i) => {
+            let e = edges[i];
+            let A = socketWorld(e.a);
+            let B = socketWorld(e.b);
+            linePos.set([A.x, A.y, 0.004, B.x, B.y, 0.004], i * 6);
+            lineGeom.attributes.position.needsUpdate = true;
+        }
+
+        let writeAll = () => {
+            for (let i = 0; i < NODE_COUNT; i++) {
+                writeNode(i)
+            }        
+            // edge lines
+            for (let i = 0; i < edges.length; i++) {
+                const e = edges[i];
+                writeEdge(i);
+                //  const A = socketWorld(e.a), B = socketWorld(e.b);
+                //  linePos.set([A.x,A.y,-0.004, B.x,B.y,-0.004], i*6);
+            }
+            // sockets positions
+            for (let i = 0; i < sockets.length; i++)
+                writeSocket(i)
+
+            header.instanceColor.needsUpdate = true;
+            labelMesh.geometry.getAttribute('instanceUv').needsUpdate = true;
+            nodeBody.instanceMatrix.needsUpdate = header.instanceMatrix.needsUpdate = labelMesh.instanceMatrix.needsUpdate = true;
+            socketMesh.instanceMatrix.needsUpdate = true;
+            lineGeom.attributes.position.needsUpdate = true;
+
+        }
+        writeAll();
+        
+        // ---------- Simple picking scaffold (nodes only) ----------
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        let dragged = {
+            i: -1,
+            dx: 0,
+            dy: 0
+        };
+        const planePick = new THREE.Plane(new THREE.Vector3(0,0,1),0);
+        let pickOffset = new THREE.Vector3();
+
+        addEventListener('pointerdown', onDown);
+        addEventListener('pointermove', onMove);
+        addEventListener('pointerup', () => {
+            dragged.i = -1;
+            controls.enabled = true;
+        }
+        );
+
+        function onDown(e) {
+            setMouse(e);
+            raycaster.setFromCamera(mouse, camera);
+            const hits = raycaster.intersectObject(nodeBody, true);
+            if (hits.length) {
+                const id = hits[0].instanceId;
+                if (id != null) {
+                    dragged.i = id;
+                    // compute offset
+                    const n = nodes[id];
+                    const p = raycaster.ray.intersectPlane(planePick, new THREE.Vector3());
+                    pickOffset.set(n.x - p.x, n.y - p.y, 0);
+                    controls.enabled = false;
+                }
+            }
+        }
+
+        function onMove(e) {
+            if (dragged.i < 0)
+                return;
+            setMouse(e);
+            raycaster.setFromCamera(mouse, camera);
+            const p = raycaster.ray.intersectPlane(planePick, new THREE.Vector3());
+            const id = dragged.i;
+
+            const n = nodes[id];
+            n.x = p.x + pickOffset.x;
+            n.y = p.y + pickOffset.y;
+
+            writeNode(id);
+
+            nodeBody.instanceMatrix.needsUpdate = header.instanceMatrix.needsUpdate = labelMesh.instanceMatrix.needsUpdate = true;
+
+            // sockets attached to this node
+            const si0 = id * 2
+              , si1 = id * 2 + 1;
+            const r = Math.min(n.w, n.h) * 0.08;
+            const sx0 = n.x - n.w / 2 - r * 0.25
+              , sx1 = n.x + n.w / 2 + r * 0.25;
+            const sy = n.y;
+            _m.compose(new THREE.Vector3(sx0,sy,0.003), _q, new THREE.Vector3(r,r,1));
+            socketMesh.setMatrixAt(si0, _m);
+            _m.compose(new THREE.Vector3(sx1,sy,0.003), _q, new THREE.Vector3(r,r,1));
+            socketMesh.setMatrixAt(si1, _m);
+            socketMesh.instanceMatrix.needsUpdate = true;
+
+            // update any line endpoints that reference these sockets
+            for (let i = 0; i < edges.length; i++) {
+                let changed = false, A, B;
+                const e = edges[i];
+                if (e.a === si0 || e.a === si1 || e.b === si0 || e.b === si1) {
+                    writeEdge(i);
+                    //changed=true;
+                }
+                if (changed)
+                    lineGeom.attributes.position.needsUpdate = true;
+            }
+        }
+
+        function setMouse(e) {
+            const r = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((e.clientX - r.left) / r.width) * 2 - 1;
+            mouse.y = -((e.clientY - r.top) / r.height) * 2 + 1;
+        }
+
+        // helper to read socket world pos quickly from nodes
+        function socketWorld(si) {
+            const s = sockets[si];
+            const n = nodes[s.node];
+            const r = Math.min(n.w, n.h) * 0.08;
+            const x = n.x + (s.side < 0 ? -n.w / 2 - r * 0.25 : n.w / 2 + r * 0.25);
+            const y = n.y + s.yOff;
+            return {
+                x,
+                y
+            };
+        }
+
+        // ---------- Animate ----------
+        function resize() {
+            const w = innerWidth
+              , h = innerHeight;
+            renderer.setSize(w, h);
+            camera.aspect = w / h;
+            camera.updateProjectionMatrix();
+        }
+        addEventListener('resize', resize);
+
+        renderer.setAnimationLoop( () => {
+            relaxer.update();
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        );
+
+        // ---------- Utils ----------
+        function mulberry32(a) {
+            return function() {
+                let t = a += 0x6D2B79F5;
+                t = Math.imul(t ^ t >>> 15, t | 1);
+                t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+                return ((t ^ t >>> 14) >>> 0) / 4294967296;
+            }
+        }
+        function buildTextAtlas(texts, opt) {
+            const pad = opt.padding | 0
+              , font = opt.font || "24px system-ui"
+              , maxW = opt.maxW || 2048
+              , ppu = 64;
+            // pixels per scene unit
+            const ctx = document.createElement('canvas').getContext('2d');
+            ctx.font = font;
+            ctx.textBaseline = "middle";
+            ctx.fillStyle = "#fff";
+            // measure
+            const metrics = texts.map(t => {
+                const m = ctx.measureText(t);
+                const h = Math.ceil(parseInt(font, 10) * 1.25);
+                return {
+                    w: Math.ceil(m.width) + pad * 2,
+                    h: h + pad * 2,
+                    text: t
+                };
+            }
+            );
+            // simple shelf pack
+            let x = 0
+              , y = 0
+              , rowH = 0
+              , atlasW = maxW
+              , atlasH = 0;
+            const rects = metrics.map(m => {
+                if (x + m.w > atlasW) {
+                    x = 0;
+                    y += rowH;
+                    rowH = 0;
+                }
+                const r = {
+                    x,
+                    y,
+                    w: m.w,
+                    h: m.h
+                };
+                x += m.w;
+                rowH = Math.max(rowH, m.h);
+                atlasH = Math.max(atlasH, y + m.h);
+                return r;
+            }
+            );
+            const pow2 = v => {
+                let p = 1;
+                while (p < v)
+                    p <<= 1;
+                return p;
+            }
+            ;
+            atlasH = pow2(atlasH);
+            // keep W as maxW
+            const can = document.createElement('canvas');
+            can.width = atlasW;
+            can.height = atlasH;
+            const c = can.getContext('2d');
+            c.fillStyle = "#0000";
+            c.clearRect(0, 0, atlasW, atlasH);
+            c.font = font;
+            c.textBaseline = "middle";
+            //c.fillStyle = "#fff";
+            c.fillStyle = "black";
+            metrics.forEach( (m, i) => {
+                const r = rects[i];
+                c.fillText(m.text, r.x + pad, r.y + r.h / 2);
+            }
+            );
+            // UV rects
+            const uvs = rects.map(r => ({
+                x: r.x / atlasW,
+                y: r.y / atlasH,
+                w: r.w / atlasW,
+                h: r.h / atlasH
+            }));
+            return {
+                canvas: can,
+                uvs,
+                rects,
+                ppu
+            };
+        }
+    </script>
+</html>
