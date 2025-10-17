@@ -586,6 +586,8 @@
 
                 setupControls(camera, domElement) {
                     const c = new OrbitControls(camera, domElement);
+                    c.minPolarAngle=c.maxPolarAngle = Math.PI*.5;
+                    c.minAzimuthAngle=c.maxAzimuthAngle = 0;
                     c.enableDamping = true;
                     return c;
                 }
