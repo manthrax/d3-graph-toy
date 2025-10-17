@@ -37,7 +37,7 @@
     </head>
     <body>
         <div id="info">Polygon Editor</div>
-        <script src="https://cdn.jsdelivr.net/npm/@labelbox/polygon-clipping@0.0.5/dist/polygon-clipping.umd.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/clipper-lib@6.4.2/clipper.js"></script>
         <script type="module">
             import * as THREE from "three";
             import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -83,8 +83,9 @@
 
             // --- SCENE OBJECTS ---
             const polygonMeshes = new THREE.Group();
+            const polygonEdges = new THREE.Group();
             const vertexHandles = new THREE.Group();
-            scene.add(polygonMeshes, vertexHandles);
+            scene.add(polygonMeshes, polygonEdges, vertexHandles);
 
             // --- LOGIC ---
 
@@ -98,14 +99,64 @@
                 // 1. Convert indexed polygons to the format required for clipping
                 const subjectPolygons = getPolygonsFromIndices(subjectPolygonIndices, vertices);
 
-                // 2. Perform clipping
-                const clippedPolygons = polygonClipping.intersection(boundaryPolygon, ...subjectPolygons);
+                // 2. Perform clipping with ClipperLib
+                const scale = 100; // Clipper works with integers
+                const subj_paths = subjectPolygons.map(p => p[0].map(v => ({ X: v[0] * scale, Y: v[1] * scale })));
+                const clip_paths = boundaryPolygon.map(p => p.map(v => ({ X: v[0] * scale, Y: v[1] * scale })));
+
+                const cpr = new ClipperLib.Clipper();
+                cpr.AddPaths(subj_paths, ClipperLib.PolyType.ptSubject, true);
+                cpr.AddPaths(clip_paths, ClipperLib.PolyType.ptClip, true);
+
+                const solution_paths = new ClipperLib.Paths();
+                const clipType = ClipperLib.ClipType.ctIntersection;
+                const subjectFillType = ClipperLib.PolyFillType.pftNonZero;
+                const clipFillType = ClipperLib.PolyFillType.pftNonZero;
+                cpr.Execute(clipType, solution_paths, subjectFillType, clipFillType);
+
+                const clippedPolygons = solution_paths.map(path => [path.map(p => [p.X / scale, p.Y / scale])]);
 
                 // 3. Render the resulting polygons
                 renderPolygons(clippedPolygons, 0x00ff00);
 
-                // 4. Render the vertex handles
+                // 4. Render the polygon edges
+                renderPolygonEdges(clippedPolygons, 0xffffff);
+
+                // 5. Render the vertex handles
                 renderVertexHandles(vertices);
+            }
+
+            function renderPolygonEdges(polygons, color) {
+                while (polygonEdges.children.length) polygonEdges.remove(polygonEdges.children[0]);
+
+                const material = new THREE.LineBasicMaterial({ color });
+
+                polygons.forEach(polygon => {
+                    if (!polygon || !polygon[0] || polygon[0].length < 2) return;
+                    const points = [];
+                    const outerRing = polygon[0];
+                    for (let i = 0; i < outerRing.length; i++) {
+                        points.push(new THREE.Vector3(outerRing[i][0], outerRing[i][1], 0.01));
+                    }
+                    points.push(new THREE.Vector3(outerRing[0][0], outerRing[0][1], 0.01)); // Close the loop
+
+                    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                    const line = new THREE.Line(geometry, material);
+                    polygonEdges.add(line);
+
+                    // Also render holes
+                    for (let i = 1; i < polygon.length; i++) {
+                        const holePoints = [];
+                        const innerRing = polygon[i];
+                        for (let j = 0; j < innerRing.length; j++) {
+                            holePoints.push(new THREE.Vector3(innerRing[j][0], innerRing[j][1], 0.01));
+                        }
+                        holePoints.push(new THREE.Vector3(innerRing[0][0], innerRing[0][1], 0.01)); // Close the loop
+                        const holeGeometry = new THREE.BufferGeometry().setFromPoints(holePoints);
+                        const holeLine = new THREE.Line(holeGeometry, material);
+                        polygonEdges.add(holeLine);
+                    }
+                });
             }
 
             function renderPolygons(polygons, color) {
