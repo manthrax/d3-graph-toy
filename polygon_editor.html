@@ -68,6 +68,7 @@
             <button id="load-btn">Load State</button>
         </div>
         <script src="https://cdn.jsdelivr.net/npm/clipper-lib@6.4.2/clipper.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/d3-delaunay@6.0.4/dist/d3-delaunay.min.js"></script>
         <script type="module">
             import * as THREE from "three";
             import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -154,16 +155,49 @@
 
                 createInitialGeometry() {
                     this.boundaryPolygon = this.createWarpedCircle(120, 30, 40);
-                    this.vertices = [
-                        { x: 0, y: 0 }, { x: 50, y: 0 }, { x: 50, y: 50 }, { x: 0, y: 50 },
-                        { x: 25, y: 25 }, { x: 75, y: 25 }, { x: 75, y: 75 }, { x: 25, y: 75 },
-                        { x: 50, y: 50 }, { x: 100, y: 50 }, { x: 100, y: 100 }, { x: 50, y: 100 }
-                    ];
-                    this.subjectPolygonIndices = [
-                        [0, 1, 2, 3],
-                        [4, 5, 6, 7],
-                        [8, 9, 10, 11]
-                    ];
+                    const numPoints = 25;
+                    const points = [];
+                    const minX = -120, maxX = 120, minY = -120, maxY = 120; // Bbox of warped circle
+                    for (let i = 0; i < numPoints; i++) {
+                        points.push([Math.random() * (maxX - minX) + minX, Math.random() * (maxY - minY) + minY]);
+                    }
+
+                    const delaunay = d3.Delaunay.from(points);
+                    const voronoi = delaunay.voronoi([minX, minY, maxX, maxY]);
+                    const voronoiPolygons = Array.from(voronoi.cellPolygons());
+
+                    const scale = 100;
+                    const finalPolygons = [];
+                    const clip_paths = this.boundaryPolygon.map(p => p.map(v => ({ X: v[0] * scale, Y: v[1] * scale })));
+
+                    voronoiPolygons.forEach(poly => {
+                        if (!poly) return;
+                        const subj_paths = [poly.map(p => ({ X: p[0] * scale, Y: p[1] * scale }))];
+                        const cpr = new ClipperLib.Clipper();
+                        cpr.AddPaths(subj_paths, ClipperLib.PolyType.ptSubject, true);
+                        cpr.AddPaths(clip_paths, ClipperLib.PolyType.ptClip, true);
+                        const solution_paths = new ClipperLib.Paths();
+                        cpr.Execute(ClipperLib.ClipType.ctIntersection, solution_paths, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+                        solution_paths.forEach(p => finalPolygons.push(p.map(pt => [pt.X / scale, pt.Y / scale])));
+                    });
+
+                    const vertexMap = new Map();
+                    this.vertices = [];
+                    this.subjectPolygonIndices = [];
+
+                    finalPolygons.forEach(poly => {
+                        const polyIndices = [];
+                        poly.forEach(p => {
+                            const key = `${p[0]},${p[1]}`;
+                            if (!vertexMap.has(key)) {
+                                vertexMap.set(key, this.vertices.length);
+                                this.vertices.push({ x: p[0], y: p[1] });
+                            }
+                            polyIndices.push(vertexMap.get(key));
+                        });
+                        this.subjectPolygonIndices.push(polyIndices);
+                    });
+
                     this.lockedPolygons = new Array(this.subjectPolygonIndices.length).fill(false);
                 }
 
