@@ -42,6 +42,7 @@
             <label><input type="checkbox" id="wireframe-toggle"> Wireframe</label>
             <br>
             <button id="add-polygon-btn">Add Polygon</button>
+            <button id="lock-polygon-btn">Lock Polygon</button>
         </div>
         <script src="https://cdn.jsdelivr.net/npm/clipper-lib@6.4.2/clipper.js"></script>
         <script type="module">
@@ -95,6 +96,7 @@
                 [4, 5, 6, 7],
                 [8, 9, 10, 11]
             ];
+            const lockedPolygons = new Array(subjectPolygonIndices.length).fill(false);
 
             // --- SCENE OBJECTS ---
             const polygonMeshes = new THREE.Group();
@@ -212,11 +214,14 @@
                         bevelEnabled: false,
                     };
                     const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-                    const color = new THREE.Color().setHSL(index / polygons.length, 0.7, 0.5);
+                    const color = lockedPolygons[index]
+                        ? new THREE.Color(0xff0000)
+                        : new THREE.Color().setHSL(index / polygons.length, 0.7, 0.5);
                     const material = new THREE.MeshPhongMaterial({
                         color,
                         side: THREE.DoubleSide,
-                        wireframe: isWireframe
+                        wireframe: isWireframe,
+                        emissive: activePolygons.has(index) ? 0x444444 : 0x000000
                     });
                     const mesh = new THREE.Mesh(geometry, material);
                     mesh.position.z = -10; // Extrude "down"
@@ -257,7 +262,9 @@
             // --- INTERACTIVITY ---
             let addPolygonMode = false;
             const newPolygonVertices = [];
+            const activePolygons = new Set();
             const addPolygonBtn = document.getElementById('add-polygon-btn');
+            const lockPolygonBtn = document.getElementById('lock-polygon-btn');
             const wireframeToggle = document.getElementById('wireframe-toggle');
 
             wireframeToggle.addEventListener('change', updateScene);
@@ -265,6 +272,12 @@
                 addPolygonMode = !addPolygonMode;
                 addPolygonBtn.style.backgroundColor = addPolygonMode ? '#4caf50' : '';
                 newPolygonVertices.length = 0; // Reset on toggle
+            });
+            lockPolygonBtn.addEventListener('click', () => {
+                activePolygons.forEach(polyIndex => {
+                    lockedPolygons[polyIndex] = !lockedPolygons[polyIndex];
+                });
+                updateScene();
             });
 
             const raycaster = new THREE.Raycaster();
@@ -326,11 +339,16 @@
                             index: handle.userData.vertexIndex,
                             handle: handle
                         };
+                        // Highlight polygons connected to the dragged vertex
+                        subjectPolygonIndices.forEach((poly, i) => {
+                            if (poly.includes(draggedVertex.index)) {
+                                activePolygons.add(i);
+                            }
+                        });
+                        updateScene();
                     }
                 }
             }
-
-            function onPointerMove(event) {
                 mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
                 mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
                 raycaster.setFromCamera(mouse, camera);
@@ -348,6 +366,14 @@
                     }
                 } else {
                     // Hovering, not dragging
+                    // Hovering, not dragging
+                    const intersects = raycaster.intersectObjects(vertexHandles.children);
+                    if (intersects.length > 0) {
+                        previewVertex.visible = false;
+                        document.body.style.cursor = 'pointer';
+                        return;
+                    }
+
                     let closestEdge = null;
                     let minDistance = Infinity;
 
@@ -382,6 +408,8 @@
                 }
                 controls.enabled = true;
                 draggedVertex = null;
+                activePolygons.clear();
+                updateScene();
             }
 
             window.addEventListener('pointerdown', onPointerDown);
@@ -428,21 +456,24 @@
                     return t >= 0 && t <= 1 && u >= 0 && u <= 1;
                 }
 
-                for (const polyIndices of subjectPolygonIndices) {
-                    for (let i = 0; i < polyIndices.length; i++) {
-                        const v1Index = polyIndices[i];
-                        const v2Index = polyIndices[(i + 1) % polyIndices.length];
+                for (let i = 0; i < subjectPolygonIndices.length; i++) {
+                    if (lockedPolygons[i]) {
+                        const polyIndices = subjectPolygonIndices[i];
+                        for (let j = 0; j < polyIndices.length; j++) {
+                            const v1Index = polyIndices[j];
+                            const v2Index = polyIndices[(j + 1) % polyIndices.length];
 
-                        // Skip edges connected to the dragged vertex
-                        if (v1Index === draggedVertexIndex || v2Index === draggedVertexIndex) {
-                            continue;
-                        }
+                            // Skip edges connected to the dragged vertex
+                            if (v1Index === draggedVertexIndex || v2Index === draggedVertexIndex) {
+                                continue;
+                            }
 
-                        const v1 = vertices[v1Index];
-                        const v2 = vertices[v2Index];
+                            const v1 = vertices[v1Index];
+                            const v2 = vertices[v2Index];
 
-                        if (segmentsIntersect(p1, p2, v1, v2)) {
-                            return true;
+                            if (segmentsIntersect(p1, p2, v1, v2)) {
+                                return true;
+                            }
                         }
                     }
                 }
