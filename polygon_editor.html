@@ -157,9 +157,24 @@
                     window.addEventListener('resize', () => this.resize());
                     window.addEventListener('keydown', (e) => {
                         if (e.key === 'Control') this.onPointerMove(e);
+
                         if (e.key === 'Delete' && this.draggedVertex) {
                             this.deleteVertex(this.draggedVertex.index);
                             this.draggedVertex = null;
+                        }
+
+                        if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+                            e.preventDefault();
+                            if (e.shiftKey) {
+                                this.redo();
+                            } else {
+                                this.undo();
+                            }
+                        }
+
+                        if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+                            e.preventDefault();
+                            this.redo();
                         }
                     });
                     window.addEventListener('keyup', (e) => { if (e.key === 'Control') this.onPointerMove(e); });
@@ -169,9 +184,14 @@
                     const boundaryPolygon = this._createWarpedCircle(120, 30, 40);
                     const polygons = [];
                     let id = 0;
-                    for (let y = -100; y < 100; y += 20) {
-                        for (let x = -100; x < 100; x += 20) {
-                            polygons.push({ id: id++, vertices: this._createHexagon(x, y, 8) });
+                    const hexRadius = 15;
+                    const hexWidth = Math.sqrt(3) * hexRadius;
+                    const hexHeight = 2 * hexRadius;
+
+                    for (let y = -100, row = 0; y < 100; y += hexHeight * 0.75, row++) {
+                        for (let x = -100; x < 100; x += hexWidth) {
+                            const offsetX = (row % 2 === 0) ? 0 : hexWidth / 2;
+                            polygons.push({ id: id++, vertices: this._createHexagon(x + offsetX, y, hexRadius) });
                         }
                     }
                     return { boundaryPolygon, polygons };
@@ -529,7 +549,7 @@
                         }
                     } else {
                         const intersects = this.raycaster.intersectObjects(this.vertexHandles.children);
-                    if (intersects.length > 0 && intersects[0].distance < 10) { // Increased radius
+                    if (intersects.length > 0 && intersects[0].distance < 20) { // Further increased radius
                             this.previewVertex.visible = false;
                             document.body.style.cursor = event.ctrlKey ? 'cell' : 'pointer';
                         } else {
