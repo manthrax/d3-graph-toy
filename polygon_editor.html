@@ -161,29 +161,23 @@
 
                 createInitialGeometry() {
                     this.boundaryPolygon = this.createWarpedCircle(120, 30, 40);
-                    const numPoints = 25;
-                    const points = [];
-                    const minX = -120, maxX = 120, minY = -120, maxY = 120; // Bbox of warped circle
-                    for (let i = 0; i < numPoints; i++) {
-                        points.push([Math.random() * (maxX - minX) + minX, Math.random() * (maxY - minY) + minY]);
-                    }
 
-                    const delaunay = d3.Delaunay.from(points);
-                    const triangles = delaunay.getTriangles();
-                    const trianglePolygons = [];
-                    for (let i = 0; i < triangles.length; i += 3) {
-                        trianglePolygons.push([
-                            points[triangles[i]],
-                            points[triangles[i + 1]],
-                            points[triangles[i + 2]]
-                        ]);
-                    }
+                    const initialPolygons = [
+                        // Square
+                        [[ -50, -50 ], [ -10, -50 ], [ -10, -10 ], [ -50, -10 ]],
+                        // Triangle
+                        [[ 10, 10 ], [ 50, 10 ], [ 30, 50 ]],
+                        // L-Shape
+                        [[ -50, 10 ], [ -20, 10 ], [ -20, 40 ], [ -30, 40 ], [ -30, 20 ], [ -50, 20 ]],
+                        // Another square
+                        [[ 20, -50 ], [ 60, -50 ], [ 60, -10 ], [ 20, -10 ]]
+                    ];
 
                     const scale = 100;
                     const finalPolygons = [];
                     const clip_paths = this.boundaryPolygon.map(p => p.map(v => ({ X: v[0] * scale, Y: v[1] * scale })));
 
-                    trianglePolygons.forEach(poly => {
+                    initialPolygons.forEach(poly => {
                         const subj_paths = [poly.map(p => ({ X: p[0] * scale, Y: p[1] * scale }))];
                         const cpr = new ClipperLib.Clipper();
                         cpr.AddPaths(subj_paths, ClipperLib.PolyType.ptSubject, true);
@@ -200,7 +194,7 @@
                     finalPolygons.forEach(poly => {
                         const polyIndices = [];
                         poly.forEach(p => {
-                            const key = `${p[0]},${p[1]}`;
+                            const key = `${p[0].toFixed(5)},${p[1].toFixed(5)}`;
                             if (!vertexMap.has(key)) {
                                 vertexMap.set(key, this.vertices.length);
                                 this.vertices.push({ x: p[0], y: p[1] });
