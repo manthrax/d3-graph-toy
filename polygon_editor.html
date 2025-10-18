@@ -169,27 +169,28 @@
                     }
 
                     const delaunay = d3.Delaunay.from(points);
-                    const voronoi = delaunay.voronoi([minX, minY, maxX, maxY]);
-                    const voronoiPolygons = Array.from(voronoi.cellPolygons());
+                    const triangles = delaunay.getTriangles();
+                    const trianglePolygons = [];
+                    for (let i = 0; i < triangles.length; i += 3) {
+                        trianglePolygons.push([
+                            points[triangles[i]],
+                            points[triangles[i + 1]],
+                            points[triangles[i + 2]]
+                        ]);
+                    }
 
                     const scale = 100;
                     const finalPolygons = [];
                     const clip_paths = this.boundaryPolygon.map(p => p.map(v => ({ X: v[0] * scale, Y: v[1] * scale })));
 
-                    voronoiPolygons.forEach(poly => {
-                        if (!poly) return;
+                    trianglePolygons.forEach(poly => {
                         const subj_paths = [poly.map(p => ({ X: p[0] * scale, Y: p[1] * scale }))];
                         const cpr = new ClipperLib.Clipper();
                         cpr.AddPaths(subj_paths, ClipperLib.PolyType.ptSubject, true);
                         cpr.AddPaths(clip_paths, ClipperLib.PolyType.ptClip, true);
                         const solution_paths = new ClipperLib.Paths();
                         cpr.Execute(ClipperLib.ClipType.ctIntersection, solution_paths, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
-
-                        const co = new ClipperLib.ClipperOffset();
-                        const offset_paths = new ClipperLib.Paths();
-                        co.AddPaths(solution_paths, ClipperLib.JoinType.jtMiter, ClipperLib.EndType.etClosedPolygon);
-                        co.Execute(offset_paths, -5 * scale); // Inset by 5 units
-                        offset_paths.forEach(p => finalPolygons.push(p.map(pt => [pt.X / scale, pt.Y / scale])));
+                        solution_paths.forEach(p => finalPolygons.push(p.map(pt => [pt.X / scale, pt.Y / scale])));
                     });
 
                     const vertexMap = new Map();
